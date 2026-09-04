@@ -61,6 +61,8 @@ export interface ClientGameState {
   impostorGuess?: string | null;
   winner?: 'INNOCENTS' | 'IMPOSTOR' | null;
   winReason?: WinReason | null;
+  eliminatedOption?: string | null;
+  eliminatedName?: string | null;
   pointsAwarded?: {
     [playerId: string]: number;
   };

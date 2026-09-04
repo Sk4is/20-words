@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useGameSocket } from './hooks/useGameSocket';
 import { Header } from './components/Header';
 import { HomeView } from './components/HomeView';
@@ -9,6 +9,7 @@ import { DiscussionAndVotingView } from './components/DiscussionAndVotingView';
 import { ImpostorGuessView } from './components/ImpostorGuessView';
 import { RoundResultView } from './components/RoundResultView';
 import { RulesModal } from './components/RulesModal';
+import { ConfirmLeaveModal } from './components/ConfirmLeaveModal';
 import { WifiOff, RefreshCw } from 'lucide-react';
 import { useLanguage } from './i18n/LanguageContext';
 
@@ -32,34 +33,87 @@ export default function App() {
   } = useGameSocket();
 
   const [showRules, setShowRules] = useState(false);
+  const [showConfirmLeave, setShowConfirmLeave] = useState(false);
 
-  // Check URL query param for shared room link (e.g. ?room=A7K4Q)
+  // Track if user explicitly exited or navigated away from a room to prevent accidental auto-rejoin
+  const hasLeftRoomRef = useRef(false);
+  const currentRoomCodeRef = useRef<string | null>(null);
+  const hasCheckedInitialUrlRef = useRef(false);
+
+  // Check URL query param for shared room link (e.g. ?room=A7K4Q) on initial mount ONLY
   useEffect(() => {
-    if (typeof window !== 'undefined' && !gameState) {
+    if (typeof window !== 'undefined' && !gameState && !hasLeftRoomRef.current && !hasCheckedInitialUrlRef.current) {
       const params = new URLSearchParams(window.location.search);
       const roomParam = params.get('room');
       if (roomParam && savedName && status === 'CONNECTED') {
+        hasCheckedInitialUrlRef.current = true;
         joinRoom(roomParam.toUpperCase(), savedName);
       }
     }
   }, [status, gameState, savedName, joinRoom]);
 
-  // Sync room query param when room changes
+  // Sync browser URL and history state when entering/leaving a room
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      if (gameState?.roomCode) {
-        const url = new URL(window.location.href);
-        url.searchParams.set('room', gameState.roomCode);
-        window.history.replaceState({}, '', url.toString());
-      } else {
+    if (typeof window === 'undefined') return;
+
+    if (gameState?.roomCode) {
+      if (currentRoomCodeRef.current !== gameState.roomCode) {
+        currentRoomCodeRef.current = gameState.roomCode;
+        hasLeftRoomRef.current = false;
+        // Push a state so pressing browser Back triggers popstate
+        window.history.pushState(
+          { inRoom: true, roomCode: gameState.roomCode },
+          '',
+          `?room=${gameState.roomCode}`
+        );
+      }
+    } else {
+      if (currentRoomCodeRef.current !== null) {
+        currentRoomCodeRef.current = null;
         const url = new URL(window.location.href);
         if (url.searchParams.has('room')) {
           url.searchParams.delete('room');
-          window.history.replaceState({}, '', url.toString());
+          window.history.replaceState({ inRoom: false }, '', url.pathname);
         }
       }
     }
   }, [gameState?.roomCode]);
+
+  // Handle browser back button navigation safely
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handlePopState = () => {
+      // If user presses back while inside a room, cleanly leave room and return to main menu
+      if (currentRoomCodeRef.current) {
+        hasLeftRoomRef.current = true;
+        currentRoomCodeRef.current = null;
+        setShowConfirmLeave(false);
+        const url = new URL(window.location.href);
+        url.searchParams.delete('room');
+        window.history.replaceState({ inRoom: false }, '', url.pathname);
+        leaveRoom();
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [leaveRoom]);
+
+  // Clean room exit after user confirms in dialog
+  const handleConfirmLeave = () => {
+    hasLeftRoomRef.current = true;
+    currentRoomCodeRef.current = null;
+    setShowConfirmLeave(false);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('room');
+      window.history.replaceState({ inRoom: false }, '', url.pathname);
+    }
+    leaveRoom();
+  };
 
   return (
     <div className="min-h-screen bg-[#1a1b4b] text-white flex flex-col font-['Plus_Jakarta_Sans'] antialiased selection:bg-[#f72585] selection:text-white">
@@ -75,7 +129,7 @@ export default function App() {
       {/* Header */}
       <Header
         gameState={gameState}
-        onLeaveRoom={leaveRoom}
+        onLeaveRoom={() => setShowConfirmLeave(true)}
         onOpenRules={() => setShowRules(true)}
       />
 
@@ -101,11 +155,8 @@ export default function App() {
             gameState={gameState}
             onSubmitClue={submitClue}
           />
-        ) : gameState.phase === 'CLUE_REVEAL' ? (
-          <ClueRevealView
-            gameState={gameState}
-          />
-        ) : gameState.phase === 'DISCUSSION' ||
+        ) : gameState.phase === 'CLUE_REVEAL' ||
+          gameState.phase === 'DISCUSSION' ||
           gameState.phase === 'VOTING' ||
           gameState.phase === 'TIEBREAK_VOTING' ? (
           <DiscussionAndVotingView
@@ -129,6 +180,13 @@ export default function App() {
       <RulesModal
         isOpen={showRules}
         onClose={() => setShowRules(false)}
+      />
+
+      {/* Leave Room Confirmation Dialog */}
+      <ConfirmLeaveModal
+        isOpen={showConfirmLeave}
+        onCancel={() => setShowConfirmLeave(false)}
+        onConfirm={handleConfirmLeave}
       />
     </div>
   );

@@ -1,19 +1,16 @@
 import express from 'express';
 import http from 'http';
+import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
 import { gameManager } from './server/gameState';
 import { ClientAction } from './src/types/game';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 async function startServer() {
   const app = express();
   const server = http.createServer(app);
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json());
 
@@ -210,7 +207,9 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = fs.existsSync(path.join(__dirname, 'index.html'))
+      ? __dirname
+      : path.resolve(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
@@ -218,7 +217,7 @@ async function startServer() {
   }
 
   server.listen(PORT, '0.0.0.0', () => {
-    console.log(`20 Words server listening on http://0.0.0.0:${PORT}`);
+    console.log(`Server listening on port ${PORT}`);
   });
 }
 

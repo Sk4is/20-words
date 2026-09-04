@@ -39,6 +39,7 @@ export interface InternalRoom {
   revealEndTimestamp: number | null;
   phaseTimer: NodeJS.Timeout | null;
   tiedPlayerIds: string[];
+  eliminatedOption: string | null;
   winner: 'INNOCENTS' | 'IMPOSTOR' | null;
   winReason: WinReason | null;
   pointsAwarded: Record<string, number>;
@@ -97,6 +98,7 @@ export class GameManager {
       revealEndTimestamp: null,
       phaseTimer: null,
       tiedPlayerIds: [],
+      eliminatedOption: null,
       winner: null,
       winReason: null,
       pointsAwarded: {},
@@ -177,8 +179,22 @@ export class GameManager {
             }
           }
 
+          // If disconnected while in LOBBY, remove player immediately so no ghost or duplicate players remain
+          if (room.phase === 'LOBBY') {
+            room.players.delete(player.id);
+          }
+
+          const remaining = Array.from(room.players.values()).filter(p => p.isConnected);
+          if (remaining.length === 0) {
+            if (room.phaseTimer) {
+              clearTimeout(room.phaseTimer);
+              room.phaseTimer = null;
+            }
+            this.rooms.delete(room.code);
+            return;
+          }
+
           this.broadcastRoomState(room);
-          this.checkEmptyRoomCleanup(room);
           return;
         }
       }
@@ -188,14 +204,11 @@ export class GameManager {
   private checkEmptyRoomCleanup(room: InternalRoom): void {
     const connectedCount = Array.from(room.players.values()).filter(p => p.isConnected).length;
     if (connectedCount === 0) {
-      // Clean up room after 10 minutes if completely deserted
-      setTimeout(() => {
-        const stillConnected = Array.from(room.players.values()).filter(p => p.isConnected).length;
-        if (stillConnected === 0) {
-          if (room.phaseTimer) clearTimeout(room.phaseTimer);
-          this.rooms.delete(room.code);
-        }
-      }, 10 * 60 * 1000);
+      if (room.phaseTimer) {
+        clearTimeout(room.phaseTimer);
+        room.phaseTimer = null;
+      }
+      this.rooms.delete(room.code);
     }
   }
 
@@ -278,6 +291,7 @@ export class GameManager {
     room.winReason = null;
     room.pointsAwarded = {};
     room.tiedPlayerIds = [];
+    room.eliminatedOption = null;
 
     // Assign player roles and reset round state
     for (const player of room.players.values()) {
@@ -344,26 +358,25 @@ export class GameManager {
     // Autofill any missing clues
     for (const player of room.players.values()) {
       if (player.isConnected && !player.clueSubmitted) {
-        player.clue = 'No clue submitted';
+        player.clue = player.clue || 'NO CLUE';
         player.clueSubmitted = true;
       }
+      player.voteTargetId = null;
+      player.hasVoted = false;
     }
 
-    // Transition to CLUE_REVEAL for 7 seconds, then DISCUSSION
-    room.phase = 'CLUE_REVEAL';
+    // Transition straight to VOTING with NO TIMER (players can discuss freely)
+    room.phase = 'VOTING';
     room.roundEndTimestamp = null;
-    room.revealEndTimestamp = Date.now() + 7000;
+    room.revealEndTimestamp = null;
+    room.tiedPlayerIds = [];
 
     this.broadcastRoomState(room);
-
-    room.phaseTimer = setTimeout(() => {
-      this.transitionToDiscussion(room);
-    }, 7000);
   }
 
   public skipClueReveal(playerId: string, roomCode: string): void {
     const room = this.rooms.get(roomCode.toUpperCase());
-    if (!room || room.phase !== 'CLUE_REVEAL') return;
+    if (!room) return;
     if (room.phaseTimer) clearTimeout(room.phaseTimer);
     this.transitionToDiscussion(room);
   }
@@ -373,13 +386,13 @@ export class GameManager {
       clearTimeout(room.phaseTimer);
       room.phaseTimer = null;
     }
-    room.phase = 'DISCUSSION';
+    room.phase = 'VOTING';
     this.broadcastRoomState(room);
   }
 
   public startVotingPhase(playerId: string, roomCode: string): void {
     const room = this.rooms.get(roomCode.toUpperCase());
-    if (!room || room.phase !== 'DISCUSSION') return;
+    if (!room) return;
     room.phase = 'VOTING';
     for (const player of room.players.values()) {
       player.voteTargetId = null;
@@ -392,7 +405,6 @@ export class GameManager {
     const room = this.rooms.get(roomCode.toUpperCase());
     if (!room || (room.phase !== 'VOTING' && room.phase !== 'TIEBREAK_VOTING' && room.phase !== 'DISCUSSION')) return;
 
-    // If still in DISCUSSION, players voting can automatically treat it as VOTING phase
     if (room.phase === 'DISCUSSION') {
       room.phase = 'VOTING';
     }
@@ -403,15 +415,16 @@ export class GameManager {
     // Cannot vote for self
     if (playerId === targetPlayerId) return;
 
-    // In tiebreak, can only vote for one of the tied players
-    if (room.phase === 'TIEBREAK_VOTING' && !room.tiedPlayerIds.includes(targetPlayerId)) {
-      return;
-    }
-
-    const isNobody = targetPlayerId === 'NOBODY';
-    if (!isNobody) {
-      const target = room.players.get(targetPlayerId);
-      if (!target) return;
+    // In tiebreak, can only vote for one of the tied options
+    if (room.phase === 'TIEBREAK_VOTING') {
+      if (!room.tiedPlayerIds.includes(targetPlayerId)) {
+        return;
+      }
+    } else {
+      if (targetPlayerId !== 'NOBODY') {
+        const target = room.players.get(targetPlayerId);
+        if (!target || !target.isConnected) return;
+      }
     }
 
     voter.voteTargetId = targetPlayerId;
@@ -430,12 +443,15 @@ export class GameManager {
 
   private evaluateVotes(room: InternalRoom): void {
     const activePlayers = Array.from(room.players.values()).filter(p => p.isConnected);
-    const voteCounts: Record<string, number> = {};
+    const isTiebreak = room.phase === 'TIEBREAK_VOTING' && room.tiedPlayerIds.length > 0;
+    const candidateIds = isTiebreak
+      ? [...room.tiedPlayerIds]
+      : [...activePlayers.map(p => p.id), 'NOBODY'];
 
-    activePlayers.forEach(p => {
-      voteCounts[p.id] = 0;
+    const voteCounts: Record<string, number> = {};
+    candidateIds.forEach(id => {
+      voteCounts[id] = 0;
     });
-    voteCounts['NOBODY'] = 0;
 
     activePlayers.forEach(p => {
       if (p.voteTargetId && voteCounts[p.voteTargetId] !== undefined) {
@@ -451,13 +467,13 @@ export class GameManager {
       }
     }
 
-    // Players who received the highest vote count
-    const topVotedPlayerIds = Object.keys(voteCounts).filter(id => voteCounts[id] === maxVotes);
+    // Options that received the highest vote count
+    const topVotedOptions = candidateIds.filter(id => voteCounts[id] === maxVotes);
 
-    if (topVotedPlayerIds.length > 1) {
-      // Tiebreak!
+    if (topVotedOptions.length > 1) {
+      // Tiebreak! Only the tied options should be selectable.
       room.phase = 'TIEBREAK_VOTING';
-      room.tiedPlayerIds = topVotedPlayerIds;
+      room.tiedPlayerIds = topVotedOptions;
       // Reset votes for tiebreak
       for (const p of room.players.values()) {
         p.voteTargetId = null;
@@ -467,27 +483,44 @@ export class GameManager {
       return;
     }
 
-    // Single highest voted player
-    const votedOutPlayerId = topVotedPlayerIds[0];
-    const isImpostor = votedOutPlayerId === room.impostorId;
+    // Single highest voted option
+    const eliminatedOption = topVotedOptions[0];
+    room.eliminatedOption = eliminatedOption;
 
-    if (!isImpostor) {
-      // The wrong player was voted out! Impostor immediately wins.
+    if (eliminatedOption === 'NOBODY') {
+      // NOBODY receives the most votes: No player is eliminated.
+      // Since nobody was eliminated, Impostor was not caught and wins the round!
       room.winner = 'IMPOSTOR';
       room.winReason = 'IMPOSTOR_NOT_CAUGHT';
       room.phase = 'ROUND_RESULT';
-
-      // Impostor gains +2 points
       room.pointsAwarded = {};
       if (room.impostorId && room.players.has(room.impostorId)) {
         const imp = room.players.get(room.impostorId)!;
         imp.score += 2;
         room.pointsAwarded[imp.id] = 2;
       }
+      this.broadcastRoomState(room);
+      return;
+    }
 
+    // A specific player receives the most votes and is eliminated!
+    const isImpostor = eliminatedOption === room.impostorId;
+
+    if (!isImpostor) {
+      // An innocent was eliminated! Impostor wins.
+      room.winner = 'IMPOSTOR';
+      room.winReason = 'IMPOSTOR_NOT_CAUGHT';
+      room.phase = 'ROUND_RESULT';
+      room.pointsAwarded = {};
+      if (room.impostorId && room.players.has(room.impostorId)) {
+        const imp = room.players.get(room.impostorId)!;
+        imp.score += 2;
+        room.pointsAwarded[imp.id] = 2;
+      }
       this.broadcastRoomState(room);
     } else {
-      // Impostor correctly identified! Give the Impostor one final chance to guess the secret word.
+      // The Impostor was identified and eliminated!
+      // Impostor gets one final chance to guess the secret word.
       room.phase = 'IMPOSTOR_GUESS';
       this.broadcastRoomState(room);
     }
@@ -531,21 +564,71 @@ export class GameManager {
     if (!room) return;
 
     const player = room.players.get(playerId);
-    if (player) {
-      player.isConnected = false;
-      player.ws = null;
-      if (player.isHost) {
-        const nextHost = Array.from(room.players.values()).find(p => p.isConnected && p.id !== player.id);
-        if (nextHost) {
-          player.isHost = false;
-          nextHost.isHost = true;
-          room.hostId = nextHost.id;
-        }
+    if (!player) return;
+
+    // If the leaving player was the host, transfer host/admin privileges automatically to another connected player
+    if (player.isHost) {
+      const nextHost = Array.from(room.players.values()).find(p => p.isConnected && p.id !== playerId);
+      if (nextHost) {
+        nextHost.isHost = true;
+        room.hostId = nextHost.id;
       }
     }
 
+    // Remove that player from the current room in real time
+    room.players.delete(playerId);
+
+    // If the last player leaves, the empty room can be deleted/cleaned up immediately
+    const remaining = Array.from(room.players.values()).filter(p => p.isConnected);
+    if (remaining.length === 0 || room.players.size === 0) {
+      if (room.phaseTimer) {
+        clearTimeout(room.phaseTimer);
+        room.phaseTimer = null;
+      }
+      this.rooms.delete(room.code);
+      return;
+    }
+
+    // If Impostor leaves during an active match, award win to Innocents and conclude round
+    if (room.impostorId === playerId && room.phase !== 'LOBBY' && room.phase !== 'ROUND_RESULT') {
+      if (room.phaseTimer) {
+        clearTimeout(room.phaseTimer);
+        room.phaseTimer = null;
+      }
+      room.winner = 'INNOCENTS';
+      room.winReason = 'IMPOSTOR_CAUGHT_FAILED_GUESS';
+      for (const p of room.players.values()) {
+        if (p.role === 'INNOCENT') {
+          p.score += 1;
+          room.pointsAwarded[p.id] = 1;
+        }
+      }
+      room.phase = 'ROUND_RESULT';
+      this.broadcastRoomState(room);
+      return;
+    }
+
+    // If leaving during clue phase or voting phase, check if remaining players have all submitted
+    if (room.phase === 'CLUE_PHASE') {
+      const allSubmitted = remaining.every(p => p.clueSubmitted);
+      if (allSubmitted && remaining.length > 0) {
+        if (room.phaseTimer) {
+          clearTimeout(room.phaseTimer);
+          room.phaseTimer = null;
+        }
+        this.endCluePhase(room);
+        return;
+      }
+    } else if (room.phase === 'VOTING' || room.phase === 'TIEBREAK_VOTING') {
+      const allVoted = remaining.every(p => p.hasVoted);
+      if (allVoted && remaining.length > 0) {
+        this.evaluateVotes(room);
+        return;
+      }
+    }
+
+    // Update the player list for everyone else immediately
     this.broadcastRoomState(room);
-    this.checkEmptyRoomCleanup(room);
   }
 
   /**
@@ -624,6 +707,12 @@ export class GameManager {
       state.winner = room.winner;
       state.winReason = room.winReason;
       state.pointsAwarded = room.pointsAwarded;
+      state.eliminatedOption = room.eliminatedOption;
+      if (room.eliminatedOption === 'NOBODY') {
+        state.eliminatedName = 'NOBODY';
+      } else if (room.eliminatedOption) {
+        state.eliminatedName = room.players.get(room.eliminatedOption)?.name || 'Unknown';
+      }
     }
 
     return state;

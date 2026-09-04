@@ -70,6 +70,20 @@ export const RoundResultView: React.FC<RoundResultViewProps> = ({
         </p>
       </motion.div>
 
+      {/* Elimination Result Badge */}
+      {gameState.eliminatedOption && (
+        <div className="w-full mb-6 text-center">
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-[#1a1b4b] border-2 border-white/20 text-white text-xs sm:text-sm font-bold shadow-lg">
+            <span>🗳️</span>
+            <span>
+              {gameState.eliminatedOption === 'NOBODY'
+                ? (t('voting.nobodyEliminated') || 'Nadie fue eliminado en la votación')
+                : (t('voting.playerEliminated', { name: gameState.eliminatedName || '' }) || `${gameState.eliminatedName} fue eliminado por la mayoría de votos`)}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Identity & Secret Word Reveal Card */}
       <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
         {/* The Impostor */}

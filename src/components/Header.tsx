@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Volume2, VolumeX, Copy, Check, LogOut, HelpCircle, Shield, EyeOff, Crown } from 'lucide-react';
+import { Volume2, VolumeX, Copy, Check, DoorOpen, HelpCircle, Shield, EyeOff, Crown } from 'lucide-react';
 import { sound } from '../services/sound';
 import { ClientGameState } from '../types/game';
 import { useLanguage } from '../i18n/LanguageContext';
@@ -135,12 +135,16 @@ export const Header: React.FC<HeaderProps> = ({
           {gameState && (
             <button
               id="leave-room-btn"
+              type="button"
               onClick={onLeaveRoom}
               aria-label={t('header.leaveRoom')}
-              className="p-2 rounded-xl text-white/70 hover:text-[#f72585] hover:bg-rose-500/20 transition cursor-pointer"
+              className="flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-2xl bg-rose-600/25 hover:bg-rose-600/40 active:bg-rose-600/60 border-2 border-rose-400/40 text-rose-200 hover:text-white transition active:scale-95 cursor-pointer shadow-md ml-1 shrink-0"
               title={t('header.leaveRoom')}
             >
-              <LogOut className="w-5 h-5" />
+              <DoorOpen className="w-4 h-4 text-rose-300 shrink-0" />
+              <span className="font-black text-[11px] sm:text-xs tracking-wider uppercase font-['Outfit'] whitespace-nowrap">
+                {t('header.leaveRoom')}
+              </span>
             </button>
           )}
         </div>
