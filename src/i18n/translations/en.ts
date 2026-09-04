@@ -124,6 +124,17 @@ export const en: Record<string, string> = {
   'voting.nobodyEliminated': 'Nobody was eliminated in the vote',
   'voting.playerEliminated': '{name} was eliminated by the majority vote',
 
+  // Impostor Guess Phase
+  'impostorGuess.badge': 'THE IMPOSTOR HAS BEEN IDENTIFIED',
+  'impostorGuess.youCaughtTitle': 'YOU WERE CAUGHT!',
+  'impostorGuess.youCaughtDesc': 'One final chance to steal the victory by guessing the secret word!',
+  'impostorGuess.selectWordHint': 'Select which of the 20 words on the board you think was the secret word.',
+  'impostorGuess.otherCaughtTitle': 'You found the Impostor!',
+  'impostorGuess.otherCaughtDesc': 'Now the Impostor has one final chance to guess the secret word.',
+  'impostorGuess.waitingForGuess': 'Waiting for the Impostor to choose a word...',
+  'impostorGuess.guessBtn': 'GUESS "{word}"',
+  'impostorGuess.selectFromGrid': 'SELECT A WORD FROM THE GRID',
+
   // Impostor Guess
   'guess.impostorIdentified': 'IMPOSTOR IDENTIFIED!',
   'guess.youWereCaught': 'YOU WERE CAUGHT!',
@@ -134,6 +145,46 @@ export const en: Record<string, string> = {
   'guess.confirmGuess': 'GUESS "{word}"',
   'guess.selectWordFirst': 'SELECT A WORD',
   'guess.waitingImpostor': 'Waiting for {name} to make their final guess...',
+
+  // Round Results (Used by RoundResultView)
+  'roundResult.innocentsWinTitle': 'THE INNOCENTS WIN!',
+  'roundResult.innocentsWinSubtitle': 'The Impostor was caught and failed to guess the secret word.',
+  'roundResult.impostorGuessedTitle': 'THE IMPOSTOR STOLE THE WIN!',
+  'roundResult.impostorGuessedSubtitle': '{name} guessed the secret word "{word}"!',
+  'roundResult.impostorNotCaughtTitle': 'THE IMPOSTOR WINS!',
+  'roundResult.impostorNotCaughtSubtitle': '{name} blended in and avoided detection!',
+  'roundResult.impostorWas': 'THE IMPOSTOR WAS',
+  'roundResult.guessed': 'Guessed: "{guess}"',
+  'roundResult.secretWordWas': 'THE SECRET WORD WAS',
+  'roundResult.category': 'Category: {category}',
+  'roundResult.summaryTitle': 'ROUND SUMMARY: CLUES & VOTES',
+  'roundResult.impostorBadge': 'IMPOSTOR',
+  'roundResult.innocentBadge': 'INNOCENT',
+  'roundResult.noClue': 'No clue',
+  'roundResult.voteCount': '{count} vote{plural}',
+  'roundResult.ptsAwarded': '+{points} pts',
+  'roundResult.hideGrid': 'Hide 20-word grid',
+  'roundResult.reviewGrid': 'Review 20-word grid',
+  'roundResult.scoreboardTitle': 'ROOM SCOREBOARD',
+  'roundResult.roundComplete': 'Round {round} Complete',
+  'roundResult.you': 'YOU',
+  'roundResult.scorePts': '{score} pts',
+  'roundResult.nextRoundBtn': 'ANOTHER ROUND',
+  'roundResult.waitingHostNextRound': 'Waiting for the Host to launch another round...',
+  'roundResult.exitBtn': 'EXIT ROOM',
+
+  // Eliminated Screen
+  'eliminated.badge': 'YOU HAVE BEEN ELIMINATED',
+  'eliminated.title': 'YOU HAVE BEEN ELIMINATED!',
+  'eliminated.desc': 'You received the majority of votes in this round.',
+  'eliminated.spectatorMode': 'Spectator Mode',
+  'eliminated.spectatorHint': 'You cannot submit clues or vote in this round, but you can spectate until it finishes.',
+  'eliminated.exitRoom': 'EXIT ROOM',
+
+  // Timer Configuration (Lobby)
+  'lobby.clueTimer': 'CLUE SUBMISSION TIMER',
+  'lobby.timerHostConfigured': 'Host set the clue timer to {seconds} seconds.',
+  'lobby.timerSliderLabel': 'Adjust clue duration (10s - 120s):',
 
   // Results
   'results.impostorWins': 'THE IMPOSTOR WINS!',

@@ -124,7 +124,18 @@ export const es: Record<string, string> = {
   'voting.nobodyEliminated': 'Nadie fue eliminado en la votación',
   'voting.playerEliminated': '{name} fue eliminado por la mayoría de votos',
 
-  // Impostor Guess
+  // Impostor Guess Phase
+  'impostorGuess.badge': 'EL IMPOSTOR HA SIDO DESCUBIERTO',
+  'impostorGuess.youCaughtTitle': '¡TE HAN DESCUBIERTO!',
+  'impostorGuess.youCaughtDesc': '¡Tienes una última oportunidad para adivinar la palabra secreta y robar la victoria!',
+  'impostorGuess.selectWordHint': 'Selecciona cuál de las 20 palabras crees que era la palabra secreta.',
+  'impostorGuess.otherCaughtTitle': '¡Habéis encontrado al impostor!',
+  'impostorGuess.otherCaughtDesc': 'Ahora el impostor tiene una última oportunidad para adivinar la palabra secreta.',
+  'impostorGuess.waitingForGuess': 'Esperando a que el impostor elija una palabra...',
+  'impostorGuess.guessBtn': 'ADIVINAR "{word}"',
+  'impostorGuess.selectFromGrid': 'SELECCIONA UNA PALABRA DEL TABLERO',
+
+  // Guess (backward compatibility)
   'guess.impostorIdentified': '¡IMPOSTOR IDENTIFICADO!',
   'guess.youWereCaught': '¡TE HAN DESCUBIERTO!',
   'guess.stealWinPrompt': '¡Una última oportunidad de ROBAR LA VICTORIA (+1 punto extra)!',
@@ -135,7 +146,47 @@ export const es: Record<string, string> = {
   'guess.selectWordFirst': 'SELECCIONA UNA PALABRA',
   'guess.waitingImpostor': 'Esperando a que {name} haga su predicción final...',
 
-  // Results
+  // Round Results (Used by RoundResultView)
+  'roundResult.innocentsWinTitle': '¡LOS INOCENTES HAN GANADO!',
+  'roundResult.innocentsWinSubtitle': 'El impostor fue descubierto y no acertó la palabra secreta.',
+  'roundResult.impostorGuessedTitle': '¡EL IMPOSTOR ROBÓ LA VICTORIA!',
+  'roundResult.impostorGuessedSubtitle': '¡{name} acertó la palabra secreta "{word}"!',
+  'roundResult.impostorNotCaughtTitle': '¡EL IMPOSTOR HA GANADO!',
+  'roundResult.impostorNotCaughtSubtitle': '¡{name} pasó desapercibido y nadie logró descubrirlo!',
+  'roundResult.impostorWas': 'EL IMPOSTOR ERA',
+  'roundResult.guessed': 'Adivinó: "{guess}"',
+  'roundResult.secretWordWas': 'LA PALABRA SECRETA ERA',
+  'roundResult.category': 'Categoría: {category}',
+  'roundResult.summaryTitle': 'RESUMEN DE RONDA: PISTAS Y VOTOS',
+  'roundResult.impostorBadge': 'IMPOSTOR',
+  'roundResult.innocentBadge': 'INOCENTE',
+  'roundResult.noClue': 'Sin pista',
+  'roundResult.voteCount': '{count} voto{plural}',
+  'roundResult.ptsAwarded': '+{points} pts',
+  'roundResult.hideGrid': 'Ocultar cuadrícula de 20 palabras',
+  'roundResult.reviewGrid': 'Ver cuadrícula de 20 palabras',
+  'roundResult.scoreboardTitle': 'CLASIFICACIÓN DE LA SALA',
+  'roundResult.roundComplete': 'Ronda {round} completada',
+  'roundResult.you': 'TÚ',
+  'roundResult.scorePts': '{score} pts',
+  'roundResult.nextRoundBtn': 'OTRA RONDA',
+  'roundResult.waitingHostNextRound': 'Esperando a que el anfitrión inicie otra ronda...',
+  'roundResult.exitBtn': 'SALIR DE LA SALA',
+
+  // Eliminated Screen
+  'eliminated.badge': 'HAS SIDO ELIMINADO',
+  'eliminated.title': '¡HAS SIDO ELIMINADO!',
+  'eliminated.desc': 'Has recibido la mayoría de votos en esta ronda.',
+  'eliminated.spectatorMode': 'Modo Espectador',
+  'eliminated.spectatorHint': 'No puedes enviar pistas ni votar en esta ronda, pero puedes observar la partida hasta que termine.',
+  'eliminated.exitRoom': 'SALIR DE LA SALA',
+
+  // Timer Configuration (Lobby)
+  'lobby.clueTimer': 'TIEMPO PARA ENVIAR PISTAS',
+  'lobby.timerHostConfigured': 'El anfitrión ha configurado el tiempo de pista en {seconds} segundos.',
+  'lobby.timerSliderLabel': 'Ajustar tiempo por pista (10s - 120s):',
+
+  // Legacy Results keys
   'results.impostorWins': '¡EL IMPOSTOR HA GANADO!',
   'results.innocentsWin': '¡LOS INOCENTES HAN GANADO!',
   'results.reasonNotCaught': '¡El Impostor se mezcló con éxito y no fue descubierto!',

@@ -168,6 +168,11 @@ export function useGameSocket() {
     send({ type: 'TOGGLE_READY' });
   };
 
+  const setClueDuration = (duration: number) => {
+    sound.playPop();
+    send({ type: 'SET_CLUE_DURATION', duration });
+  };
+
   const startGame = () => {
     sound.playPop();
     send({ type: 'START_GAME' });
@@ -218,6 +223,7 @@ export function useGameSocket() {
     createRoom,
     joinRoom,
     toggleReady,
+    setClueDuration,
     startGame,
     submitClue,
     startVoting,

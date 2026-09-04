@@ -8,6 +8,7 @@ import { ClueRevealView } from './components/ClueRevealView';
 import { DiscussionAndVotingView } from './components/DiscussionAndVotingView';
 import { ImpostorGuessView } from './components/ImpostorGuessView';
 import { RoundResultView } from './components/RoundResultView';
+import { EliminatedPlayerView } from './components/EliminatedPlayerView';
 import { RulesModal } from './components/RulesModal';
 import { ConfirmLeaveModal } from './components/ConfirmLeaveModal';
 import { WifiOff, RefreshCw } from 'lucide-react';
@@ -28,6 +29,7 @@ export default function App() {
     submitVote,
     submitImpostorGuess,
     nextRound,
+    setClueDuration,
     leaveRoom,
     clearError
   } = useGameSocket();
@@ -39,6 +41,9 @@ export default function App() {
   const hasLeftRoomRef = useRef(false);
   const currentRoomCodeRef = useRef<string | null>(null);
   const hasCheckedInitialUrlRef = useRef(false);
+
+  const myPlayer = gameState?.players.find(p => p.id === gameState.myPlayerId);
+  const isEliminated = myPlayer?.status === 'eliminated';
 
   // Check URL query param for shared room link (e.g. ?room=A7K4Q) on initial mount ONLY
   useEffect(() => {
@@ -149,6 +154,12 @@ export default function App() {
             gameState={gameState}
             onToggleReady={toggleReady}
             onStartGame={startGame}
+            onSetClueDuration={setClueDuration}
+          />
+        ) : isEliminated && gameState.phase !== 'ROUND_RESULT' && !(gameState.phase === 'IMPOSTOR_GUESS' && gameState.myRole === 'IMPOSTOR') ? (
+          <EliminatedPlayerView
+            gameState={gameState}
+            onLeaveRoom={() => setShowConfirmLeave(true)}
           />
         ) : gameState.phase === 'CLUE_PHASE' ? (
           <CluePhaseView
@@ -172,6 +183,7 @@ export default function App() {
           <RoundResultView
             gameState={gameState}
             onNextRound={nextRound}
+            onLeaveRoom={() => setShowConfirmLeave(true)}
           />
         ) : null}
       </main>

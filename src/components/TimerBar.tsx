@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Clock } from 'lucide-react';
 import { sound } from '../services/sound';
+import { useLanguage } from '../i18n/LanguageContext';
 
 interface TimerBarProps {
   roundEndTimestamp: number | null | undefined;
@@ -11,12 +12,13 @@ export const TimerBar: React.FC<TimerBarProps> = ({
   roundEndTimestamp,
   totalDurationSeconds = 30
 }) => {
-  const [secondsRemaining, setSecondsRemaining] = useState<number>(30);
+  const { t } = useLanguage();
+  const [secondsRemaining, setSecondsRemaining] = useState<number>(totalDurationSeconds);
   const lastTickRef = useRef<number>(-1);
 
   useEffect(() => {
     if (!roundEndTimestamp) {
-      setSecondsRemaining(30);
+      setSecondsRemaining(totalDurationSeconds);
       return;
     }
 
@@ -35,18 +37,20 @@ export const TimerBar: React.FC<TimerBarProps> = ({
     check();
     const interval = setInterval(check, 200);
     return () => clearInterval(interval);
-  }, [roundEndTimestamp]);
+  }, [roundEndTimestamp, totalDurationSeconds]);
 
   const percentage = Math.min(100, Math.max(0, (secondsRemaining / totalDurationSeconds) * 100));
   const isUrgent = secondsRemaining <= 5;
-  const formattedTime = `00:${secondsRemaining.toString().padStart(2, '0')}`;
+  const mins = Math.floor(secondsRemaining / 60);
+  const secs = secondsRemaining % 60;
+  const formattedTime = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 
   return (
     <div className="w-full flex flex-col gap-1.5">
       <div className="flex items-center justify-between text-xs font-bold px-1">
         <span className="flex items-center gap-1.5 text-[#4cc9f0] tracking-wider uppercase">
           <Clock className={`w-4 h-4 ${isUrgent ? 'text-[#f72585] animate-pulse' : 'text-[#4cc9f0]'}`} />
-          <span>TIME REMAINING</span>
+          <span>{t('cluePhase.timeRemaining') || 'TIEMPO RESTANTE'}</span>
         </span>
         <span
           className={`font-mono text-lg font-black tracking-wider transition-colors ${

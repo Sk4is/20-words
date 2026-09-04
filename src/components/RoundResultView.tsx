@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Trophy, EyeOff, Sparkles, ArrowRight, Grid, ChevronDown, ChevronUp } from 'lucide-react';
+import { Trophy, EyeOff, Sparkles, ArrowRight, Grid, ChevronDown, ChevronUp, LogOut } from 'lucide-react';
 import { ClientGameState } from '../types/game';
 import { WordGrid } from './WordGrid';
 import { useLanguage } from '../i18n/LanguageContext';
@@ -8,11 +8,13 @@ import { useLanguage } from '../i18n/LanguageContext';
 interface RoundResultViewProps {
   gameState: ClientGameState;
   onNextRound: () => void;
+  onLeaveRoom?: () => void;
 }
 
 export const RoundResultView: React.FC<RoundResultViewProps> = ({
   gameState,
-  onNextRound
+  onNextRound,
+  onLeaveRoom
 }) => {
   const { t, tCategory, tWord } = useLanguage();
   const [showFullGrid, setShowFullGrid] = useState(false);
@@ -244,8 +246,8 @@ export const RoundResultView: React.FC<RoundResultViewProps> = ({
         </div>
       </div>
 
-      {/* Next Round Control */}
-      <div className="w-full max-w-md">
+      {/* Next Round & Exit Room Actions */}
+      <div className="w-full max-w-md space-y-3">
         {isHost ? (
           <button
             id="next-round-btn"
@@ -259,6 +261,17 @@ export const RoundResultView: React.FC<RoundResultViewProps> = ({
           <div className="p-4 rounded-3xl bg-[#2d3282] border-4 border-[#3e46b1] text-center text-xs font-bold text-white/70 shadow-xl">
             {t('roundResult.waitingHostNextRound')}
           </div>
+        )}
+
+        {onLeaveRoom && (
+          <button
+            id="result-leave-room-btn"
+            onClick={onLeaveRoom}
+            className="w-full py-3.5 px-6 rounded-2xl bg-[#1a1b4b] hover:bg-[#1a1b4b]/80 border-2 border-white/20 hover:border-[#f72585] text-white font-black text-xs uppercase tracking-widest transition-all active:translate-y-[1px] flex items-center justify-center gap-2 cursor-pointer shadow-md"
+          >
+            <LogOut className="w-4 h-4 text-white/70" />
+            <span>{t('roundResult.exitBtn') || t('header.leaveRoom')}</span>
+          </button>
         )}
       </div>
     </div>

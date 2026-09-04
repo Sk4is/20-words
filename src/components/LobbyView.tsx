@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Crown, CheckCircle2, Circle, Copy, Check, Users, Play, Sparkles } from 'lucide-react';
+import { Crown, CheckCircle2, Circle, Copy, Check, Users, Play, Sparkles, Clock } from 'lucide-react';
 import { ClientGameState } from '../types/game';
 import { sound } from '../services/sound';
 import { useLanguage } from '../i18n/LanguageContext';
@@ -9,12 +9,14 @@ interface LobbyViewProps {
   gameState: ClientGameState;
   onToggleReady: () => void;
   onStartGame: () => void;
+  onSetClueDuration?: (duration: number) => void;
 }
 
 export const LobbyView: React.FC<LobbyViewProps> = ({
   gameState,
   onToggleReady,
-  onStartGame
+  onStartGame,
+  onSetClueDuration
 }) => {
   const { t } = useLanguage();
   const [copied, setCopied] = useState(false);
@@ -35,6 +37,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   };
 
   const missingPlayers = minPlayers - connectedCount;
+  const currentDuration = gameState.clueDuration || 30;
 
   return (
     <div className="w-full max-w-xl mx-auto px-4 py-6 flex flex-col items-center">
@@ -69,6 +72,60 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
           {t('lobby.shareHint')}
         </p>
       </motion.div>
+
+      {/* Clue Timer Configuration (Host Configurable 10-120s) */}
+      <div className="w-full bg-[#2d3282] border-4 border-[#3e46b1] rounded-3xl p-5 shadow-2xl mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Clock className="w-5 h-5 text-[#4cc9f0]" />
+            <h3 className="font-black text-sm sm:text-base text-white font-['Outfit'] tracking-wide uppercase">
+              {t('lobby.clueTimer')}
+            </h3>
+          </div>
+          <span className="px-3 py-1 rounded-full bg-[#1a1b4b] text-[#4cc9f0] text-sm font-black border border-[#4cc9f0]/40 font-mono shadow-inner">
+            {currentDuration}s
+          </span>
+        </div>
+
+        {myPlayer?.isHost ? (
+          <div>
+            <div className="mb-2">
+              <input
+                id="lobby-clue-duration-slider"
+                type="range"
+                min={10}
+                max={120}
+                step={5}
+                value={currentDuration}
+                onChange={(e) => onSetClueDuration?.(Number(e.target.value))}
+                className="w-full accent-[#4cc9f0] h-2 bg-[#1a1b4b] rounded-lg cursor-pointer"
+              />
+            </div>
+
+            {/* Quick preset buttons */}
+            <div className="flex items-center justify-between gap-1.5 mt-3">
+              {[15, 30, 45, 60, 90].map((sec) => (
+                <button
+                  key={sec}
+                  type="button"
+                  onClick={() => onSetClueDuration?.(sec)}
+                  className={`flex-1 py-1.5 px-2 rounded-xl text-xs font-mono font-black transition cursor-pointer ${
+                    currentDuration === sec
+                      ? 'bg-[#4cc9f0] text-[#1a1b4b] shadow-md'
+                      : 'bg-[#1a1b4b] text-white/80 hover:bg-[#1a1b4b]/80 border border-white/10'
+                  }`}
+                >
+                  {sec}s
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-white/70 font-medium">
+            {t('lobby.timerHostConfigured', { seconds: currentDuration })}
+          </p>
+        )}
+      </div>
 
       {/* Players List Card */}
       <div className="w-full bg-[#2d3282] border-4 border-[#3e46b1] rounded-3xl p-5 sm:p-6 shadow-2xl mb-6">

@@ -19,6 +19,7 @@ import {
   GamePhase,
   PlayerPublic,
   PlayerRole,
+  PlayerStatus,
   WinReason
 } from '../src/types/game.js';
 import { CATEGORIES, selectRoundWords } from '../src/data/categories.js';
@@ -30,6 +31,7 @@ export interface FirestorePlayer {
   ready: boolean;
   connected: boolean;
   isHost: boolean;
+  status: PlayerStatus;
   score: number;
   role: PlayerRole | null;
   clue: string | null;
@@ -46,6 +48,7 @@ export interface FirestoreRoom {
   currentPhase: GamePhase;
   maxPlayers: number;
   players: Record<string, FirestorePlayer>;
+  clueDuration: number;
   roundNumber: number;
   category: string;
   words: string[];
@@ -159,6 +162,7 @@ export class FirestoreGameManager {
       ready: false,
       connected: true,
       isHost: true,
+      status: 'active',
       score: 0,
       role: null,
       clue: null,
@@ -177,6 +181,7 @@ export class FirestoreGameManager {
       players: {
         [playerId]: hostPlayer
       },
+      clueDuration: 30,
       roundNumber: 0,
       category: '',
       words: [],
@@ -293,6 +298,7 @@ export class FirestoreGameManager {
           ready: false,
           connected: true,
           isHost: false,
+          status: 'active',
           score: 0,
           role: null,
           clue: null,
@@ -569,6 +575,41 @@ export class FirestoreGameManager {
   }
 
   /**
+   * Set Clue Duration (Host only, 10-120 seconds)
+   */
+  public async setClueDuration(roomCode: string, playerId: string, duration: number): Promise<{ success: boolean; error?: string }> {
+    const code = roomCode.trim().toUpperCase();
+    const roomRef = doc(this.db, 'rooms', code);
+
+    try {
+      return await runTransaction(this.db, async (tx) => {
+        const snap = await tx.get(roomRef);
+        if (!snap.exists()) return { success: false, error: 'Room not found' };
+
+        const room = snap.data() as FirestoreRoom;
+        const player = room.players?.[playerId];
+        if (!player || !player.isHost) {
+          return { success: false, error: 'Only the host can configure the clue timer' };
+        }
+
+        // Clamp duration between 10 and 120 seconds
+        const clampedDuration = Math.min(120, Math.max(10, Math.round(duration)));
+
+        tx.update(roomRef, {
+          clueDuration: clampedDuration,
+          updatedAt: Date.now()
+        });
+
+        console.log(`[TIMER CONFIG] Host ${player.name} updated clue timer to ${clampedDuration}s for room ${code}`);
+        return { success: true };
+      });
+    } catch (err: any) {
+      console.error(`[DATABASE ERROR] Set clue duration failed:`, err);
+      return { success: false, error: err.message || 'Failed to update timer' };
+    }
+  }
+
+  /**
    * Start Game
    */
   public async startGame(roomCode: string, playerId: string): Promise<{ success: boolean; error?: string }> {
@@ -610,6 +651,7 @@ export class FirestoreGameManager {
         for (const p of Object.values(room.players)) {
           updatedPlayers[p.playerId] = {
             ...p,
+            status: 'active',
             role: p.connected ? (p.playerId === impostorPlayer.playerId ? 'IMPOSTOR' : 'INNOCENT') : null,
             clue: null,
             clueSubmitted: false,
@@ -618,7 +660,8 @@ export class FirestoreGameManager {
           };
         }
 
-        const durationMs = 30000;
+        const durationSeconds = room.clueDuration || 30;
+        const durationMs = durationSeconds * 1000;
         const roundEndTimestamp = Date.now() + durationMs;
 
         tx.update(roomRef, {
@@ -640,7 +683,7 @@ export class FirestoreGameManager {
           updatedAt: Date.now()
         });
 
-        console.log(`[START GAME] Room ${code} round ${room.roundNumber + 1} started. Category: ${categoryData.name}`);
+        console.log(`[START GAME] Room ${code} round ${room.roundNumber + 1} started. Category: ${categoryData.name} with ${durationSeconds}s timer`);
         return { success: true };
       });
     } catch (err: any) {
@@ -667,7 +710,7 @@ export class FirestoreGameManager {
         if (room.currentPhase !== 'CLUE_PHASE') return;
 
         const player = room.players[playerId];
-        if (!player || player.clueSubmitted) return;
+        if (!player || player.clueSubmitted || player.status === 'eliminated') return;
 
         // Sanitize clue
         let sanitized = clueText.trim().replace(/[\r\n\t]+/g, ' ');
@@ -686,7 +729,7 @@ export class FirestoreGameManager {
         const updatedPlayers = { ...room.players, [playerId]: updatedPlayer };
 
         // Check if all connected active players submitted
-        const activePlayers = Object.values(updatedPlayers).filter(p => p.connected);
+        const activePlayers = Object.values(updatedPlayers).filter(p => p.connected && p.status !== 'eliminated');
         const allSubmitted = activePlayers.every(p => p.clueSubmitted);
 
         if (allSubmitted) {
@@ -783,7 +826,7 @@ export class FirestoreGameManager {
         }
 
         const voter = room.players[playerId];
-        if (!voter || voter.hasVoted) return;
+        if (!voter || voter.hasVoted || voter.status === 'eliminated') return;
         if (playerId === targetPlayerId) return; // Cannot vote for self
 
         if (room.currentPhase === 'TIEBREAK_VOTING') {
@@ -802,7 +845,7 @@ export class FirestoreGameManager {
         };
 
         const updatedPlayers = { ...room.players, [playerId]: updatedVoter };
-        const activePlayers = Object.values(updatedPlayers).filter(p => p.connected);
+        const activePlayers = Object.values(updatedPlayers).filter(p => p.connected && p.status !== 'eliminated');
         const allVoted = activePlayers.every(p => p.hasVoted);
 
         if (allVoted) {
@@ -846,6 +889,10 @@ export class FirestoreGameManager {
 
           // Single highest voted
           const eliminatedOption = topVotedOptions[0];
+
+          if (eliminatedOption !== 'NOBODY' && updatedPlayers[eliminatedOption]) {
+            updatedPlayers[eliminatedOption].status = 'eliminated';
+          }
 
           if (eliminatedOption === 'NOBODY') {
             // Impostor not caught
@@ -965,10 +1012,81 @@ export class FirestoreGameManager {
   }
 
   /**
-   * Next Round
+   * Next Round (Called by Host from ROUND_RESULT)
    */
   public async nextRound(roomCode: string, playerId: string): Promise<{ success: boolean; error?: string }> {
-    return this.startGame(roomCode, playerId);
+    const code = roomCode.trim().toUpperCase();
+    const roomRef = doc(this.db, 'rooms', code);
+
+    try {
+      return await runTransaction(this.db, async (tx) => {
+        const snap = await tx.get(roomRef);
+        if (!snap.exists()) return { success: false, error: 'Room not found' };
+
+        const room = snap.data() as FirestoreRoom;
+        const player = room.players?.[playerId];
+        if (!player || !player.isHost) {
+          return { success: false, error: 'Only the host can start another round' };
+        }
+
+        const connectedPlayers = Object.values(room.players).filter(p => p.connected);
+        if (connectedPlayers.length < 3) {
+          return { success: false, error: 'At least 3 players are required to start.' };
+        }
+
+        // Pick new category and words
+        const catIndex = Math.floor(Math.random() * CATEGORIES.length);
+        const categoryData = CATEGORIES[catIndex];
+        const { words, secretWord, secretIndex } = selectRoundWords(categoryData);
+
+        // Pick new Impostor randomly
+        const impostorIndex = Math.floor(Math.random() * connectedPlayers.length);
+        const impostorPlayer = connectedPlayers[impostorIndex];
+
+        // Reset all players to 'active' on new round!
+        const updatedPlayers: Record<string, FirestorePlayer> = {};
+        for (const p of Object.values(room.players)) {
+          updatedPlayers[p.playerId] = {
+            ...p,
+            status: 'active',
+            role: p.connected ? (p.playerId === impostorPlayer.playerId ? 'IMPOSTOR' : 'INNOCENT') : null,
+            clue: null,
+            clueSubmitted: false,
+            voteTargetId: null,
+            hasVoted: false
+          };
+        }
+
+        const durationSeconds = room.clueDuration || 30;
+        const durationMs = durationSeconds * 1000;
+        const roundEndTimestamp = Date.now() + durationMs;
+
+        tx.update(roomRef, {
+          roundNumber: (room.roundNumber || 0) + 1,
+          category: categoryData.name,
+          words,
+          secretWord,
+          secretWordIndex: secretIndex,
+          impostorId: impostorPlayer.playerId,
+          impostorGuess: null,
+          winner: null,
+          winReason: null,
+          pointsAwarded: {},
+          tiedPlayerIds: [],
+          eliminatedOption: null,
+          currentPhase: 'CLUE_PHASE',
+          roundEndTimestamp,
+          players: updatedPlayers,
+          updatedAt: Date.now()
+        });
+
+        console.log(`[NEXT ROUND] Room ${code} round ${room.roundNumber + 1} started. Category: ${categoryData.name} with ${durationSeconds}s timer`);
+        return { success: true };
+      });
+    } catch (err: any) {
+      console.error(`[DATABASE ERROR] Next round failed:`, err);
+      return { success: false, error: err.message || 'Failed to start next round' };
+    }
   }
 
   /**
@@ -1017,6 +1135,7 @@ export class FirestoreGameManager {
         isHost: p.isHost,
         isReady: p.ready,
         isConnected: p.connected,
+        status: p.status || 'active',
         score: p.score || 0,
         clueSubmitted: p.clueSubmitted || false,
         hasVoted: p.hasVoted || false,
@@ -1038,6 +1157,7 @@ export class FirestoreGameManager {
       category: room.category || '',
       words: room.words || [],
       myRole: me?.role || null,
+      clueDuration: room.clueDuration || 30,
       roundEndTimestamp: room.roundEndTimestamp,
       mySubmittedClue: me?.clue ?? undefined,
       tiedPlayerIds: room.tiedPlayerIds || [],
@@ -1061,6 +1181,7 @@ export class FirestoreGameManager {
       state.winReason = room.winReason;
       state.pointsAwarded = room.pointsAwarded;
       state.eliminatedOption = room.eliminatedOption;
+      state.eliminatedPlayerId = (room.eliminatedOption && room.eliminatedOption !== 'NOBODY') ? room.eliminatedOption : null;
       if (room.eliminatedOption === 'NOBODY') {
         state.eliminatedName = 'NOBODY';
       } else if (room.eliminatedOption) {

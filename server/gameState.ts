@@ -20,6 +20,7 @@ export interface InternalPlayer {
   clueSubmitted: boolean;
   voteTargetId: string | null;
   hasVoted: boolean;
+  status: 'active' | 'eliminated';
   ws?: WebSocket | null;
   lastActive: number;
 }
@@ -40,6 +41,8 @@ export interface InternalRoom {
   phaseTimer: NodeJS.Timeout | null;
   tiedPlayerIds: string[];
   eliminatedOption: string | null;
+  eliminatedPlayerId?: string | null;
+  clueDuration?: number;
   winner: 'INNOCENTS' | 'IMPOSTOR' | null;
   winReason: WinReason | null;
   pointsAwarded: Record<string, number>;
@@ -79,6 +82,7 @@ export class GameManager {
       clueSubmitted: false,
       voteTargetId: null,
       hasVoted: false,
+      status: 'active',
       ws,
       lastActive: Date.now()
     };
@@ -99,6 +103,8 @@ export class GameManager {
       phaseTimer: null,
       tiedPlayerIds: [],
       eliminatedOption: null,
+      eliminatedPlayerId: null,
+      clueDuration: 30,
       winner: null,
       winReason: null,
       pointsAwarded: {},
@@ -153,6 +159,7 @@ export class GameManager {
       clueSubmitted: false,
       voteTargetId: null,
       hasVoted: false,
+      status: 'active',
       ws,
       lastActive: Date.now()
     };
@@ -663,6 +670,7 @@ export class GameManager {
         score: p.score,
         clueSubmitted: p.clueSubmitted,
         hasVoted: p.hasVoted,
+        status: p.status || 'active',
         // Only reveal other clues in reveal/discussion/results
         clue: (showClue || p.id === playerId) ? (p.clue ?? undefined) : undefined,
         // Roles only revealed at round result!
@@ -684,6 +692,8 @@ export class GameManager {
       words: room.words,
       myRole: me?.role || null,
       roundEndTimestamp: room.roundEndTimestamp,
+      clueDuration: room.clueDuration || 30,
+      eliminatedPlayerId: room.eliminatedPlayerId || null,
       mySubmittedClue: me?.clue ?? undefined,
       tiedPlayerIds: room.tiedPlayerIds,
       myVoteTargetId: me?.voteTargetId ?? undefined

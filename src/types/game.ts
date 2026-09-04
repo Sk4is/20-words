@@ -11,12 +11,15 @@ export type GamePhase =
 
 export type PlayerRole = 'INNOCENT' | 'IMPOSTOR';
 
+export type PlayerStatus = 'active' | 'eliminated';
+
 export interface PlayerPublic {
   id: string;
   name: string;
   isHost: boolean;
   isReady: boolean;
   isConnected: boolean;
+  status: PlayerStatus;
   score: number;
   clueSubmitted: boolean;
   hasVoted: boolean;
@@ -48,6 +51,7 @@ export interface ClientGameState {
   secretWordIndex?: number;
   
   // Clue Phase:
+  clueDuration?: number; // Configurable timer in seconds (10 - 120s, default 30s)
   roundEndTimestamp?: number | null;
   mySubmittedClue?: string;
 
@@ -63,6 +67,7 @@ export interface ClientGameState {
   winReason?: WinReason | null;
   eliminatedOption?: string | null;
   eliminatedName?: string | null;
+  eliminatedPlayerId?: string | null;
   pointsAwarded?: {
     [playerId: string]: number;
   };
@@ -75,6 +80,7 @@ export type ClientAction =
   | { type: 'RECONNECT'; roomCode: string; playerId: string }
   | { type: 'TOGGLE_READY' }
   | { type: 'START_GAME' }
+  | { type: 'SET_CLUE_DURATION'; duration: number }
   | { type: 'SUBMIT_CLUE'; clue: string }
   | { type: 'START_VOTING' }
   | { type: 'SUBMIT_VOTE'; targetPlayerId: string }

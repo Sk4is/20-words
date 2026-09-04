@@ -10,7 +10,7 @@ import { ClientAction } from './src/types/game';
 async function startServer() {
   const app = express();
   const server = http.createServer(app);
-  const PORT = Number(process.env.PORT) || 3000;
+  const PORT = 3000;
 
   app.use(express.json());
 
@@ -175,6 +175,13 @@ async function startServer() {
             break;
           }
 
+          case 'SET_CLUE_DURATION': {
+            if (activePlayerId && activeRoomCode) {
+              await firestoreGameManager.setClueDuration(activeRoomCode, activePlayerId, action.duration);
+            }
+            break;
+          }
+
           case 'START_GAME': {
             if (activePlayerId && activeRoomCode) {
               const res = await firestoreGameManager.startGame(activeRoomCode, activePlayerId);
@@ -208,7 +215,7 @@ async function startServer() {
 
           case 'SUBMIT_IMPOSTOR_GUESS': {
             if (activePlayerId && activeRoomCode) {
-              await firestoreGameManager.submitImpostorGuess(activePlayerId, activeRoomCode, action.word);
+              await firestoreGameManager.submitImpostorGuess(activeRoomCode, activePlayerId, action.word);
             }
             break;
           }
@@ -254,9 +261,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = fs.existsSync(path.join(__dirname, 'index.html'))
-      ? __dirname
-      : path.resolve(process.cwd(), 'dist');
+    const distPath = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));

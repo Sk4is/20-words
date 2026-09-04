@@ -70,9 +70,46 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       template = TRANSLATION_MAP.es[key];
     }
 
-    // If still missing, return key
+    // Secondary fallback: check alias mappings between component keys and dictionary keys
     if (!template) {
-      return key;
+      const aliasMap: Record<string, string> = {
+        'impostorGuess.badge': 'impostorGuess.badge',
+        'impostorGuess.youCaughtTitle': 'guess.youWereCaught',
+        'impostorGuess.youCaughtDesc': 'guess.stealWinPrompt',
+        'impostorGuess.selectWordHint': 'guess.stealWinInstruction',
+        'impostorGuess.otherCaughtTitle': 'guess.playerWasCaught',
+        'impostorGuess.otherCaughtDesc': 'impostorGuess.otherCaughtDesc',
+        'impostorGuess.waitingForGuess': 'impostorGuess.waitingForGuess',
+        'impostorGuess.guessBtn': 'guess.confirmGuess',
+        'impostorGuess.selectFromGrid': 'guess.selectWordFirst',
+        'roundResult.innocentsWinTitle': 'results.innocentsWin',
+        'roundResult.impostorNotCaughtTitle': 'results.impostorWins',
+        'roundResult.impostorWas': 'results.theImpostorWas',
+        'roundResult.secretWordWas': 'results.theSecretWordWas',
+        'roundResult.summaryTitle': 'results.roundSummary',
+        'roundResult.scoreboardTitle': 'results.scoreboard',
+        'roundResult.nextRoundBtn': 'results.nextRound',
+        'roundResult.waitingHostNextRound': 'results.waitingHostNext',
+        'roundResult.hideGrid': 'results.hideFullGrid',
+        'roundResult.reviewGrid': 'results.reviewFullGrid',
+      };
+
+      const aliasKey = aliasMap[key];
+      if (aliasKey) {
+        template = langDict[aliasKey] || TRANSLATION_MAP.es[aliasKey];
+      }
+    }
+
+    // Absolute fallback: ensure NO raw dot-notation key can ever appear visually
+    if (!template) {
+      console.warn(`[i18n] Missing translation for key: "${key}"`);
+      // Strip namespace if present and capitalize words
+      const parts = key.split('.');
+      const rawText = parts[parts.length - 1]
+        .replace(/([A-Z])/g, ' $1')
+        .replace(/[_-]/g, ' ')
+        .trim();
+      template = rawText.charAt(0).toUpperCase() + rawText.slice(1);
     }
 
     if (!params) {

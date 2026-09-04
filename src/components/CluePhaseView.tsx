@@ -96,9 +96,12 @@ export const CluePhaseView: React.FC<CluePhaseViewProps> = ({
         </div>
       </div>
 
-      {/* 30-Second Countdown Timer Bar */}
+      {/* Countdown Timer Bar */}
       <div className="w-full mb-4">
-        <TimerBar roundEndTimestamp={gameState.roundEndTimestamp} totalDurationSeconds={30} />
+        <TimerBar
+          roundEndTimestamp={gameState.roundEndTimestamp}
+          totalDurationSeconds={gameState.clueDuration || 30}
+        />
       </div>
 
       {/* 4 x 5 Word Grid */}
