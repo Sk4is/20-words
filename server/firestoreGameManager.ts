@@ -1,4 +1,5 @@
 import { WebSocket } from 'ws';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { initializeApp, FirebaseApp } from 'firebase/app';
@@ -74,6 +75,31 @@ export class CustomError extends Error {
     this.code = code;
     Object.setPrototypeOf(this, CustomError.prototype);
   }
+}
+
+/**
+ * Authoritative Impostor Selection:
+ * Uniformly and unbiasedly selects exactly 1 Impostor from all currently connected, active participants.
+ * Eliminates any bias, ordering priority, host preference, or array index 0 correlation by:
+ * 1. Shuffling candidates using Fisher-Yates with crypto.randomInt (CSPRNG).
+ * 2. Selecting a random index uniformly via crypto.randomInt.
+ */
+export function selectAuthoritativeImpostor(eligiblePlayers: FirestorePlayer[]): FirestorePlayer {
+  if (!eligiblePlayers || eligiblePlayers.length === 0) {
+    throw new CustomError('Cannot select Impostor: No active eligible players found in room.', 'NO_ELIGIBLE_PLAYERS');
+  }
+
+  // Shuffle candidate pool using Fisher-Yates with CSPRNG
+  const pool = [...eligiblePlayers];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(0, i + 1);
+    const temp = pool[i];
+    pool[i] = pool[j];
+    pool[j] = temp;
+  }
+
+  const selectedIndex = crypto.randomInt(0, pool.length);
+  return pool[selectedIndex];
 }
 
 export class FirestoreGameManager {
@@ -667,12 +693,14 @@ export class FirestoreGameManager {
           return { success: false, error: 'Only the host can start the game' };
         }
 
-        const activePlayers = Object.values(room.players).filter(p => p.connected);
-        if (activePlayers.length < 3) {
+        const allPlayers = Object.values(room.players || {});
+        // Only include players who are currently connected and active in the room
+        const activeEligiblePlayers = allPlayers.filter(p => p.connected === true);
+        if (activeEligiblePlayers.length < 3) {
           return { success: false, error: 'At least 3 players are required to start.' };
         }
 
-        const allReady = activePlayers.every(p => p.ready);
+        const allReady = activeEligiblePlayers.every(p => p.ready);
         if (!allReady) {
           return { success: false, error: 'All players must be ready before starting.' };
         }
@@ -682,17 +710,19 @@ export class FirestoreGameManager {
         const recentSecrets = room.recentSecretWords || [];
         const { words, secretWord, secretIndex } = selectRoundWords(categoryData, recentSecrets);
 
-        // Pick Impostor
-        const impostorIndex = Math.floor(Math.random() * activePlayers.length);
-        const impostorPlayer = activePlayers[impostorIndex];
+        // Authoritative unbiased Impostor selection with uniform probability across all eligible players
+        const impostorPlayer = selectAuthoritativeImpostor(activeEligiblePlayers);
+        const chosenImpostorId = impostorPlayer.playerId;
 
-        // Prepare updated players
+        // Prepare updated players: reset all statuses to 'active' for the round and assign roles
         const updatedPlayers: Record<string, FirestorePlayer> = {};
-        for (const p of Object.values(room.players)) {
+        for (const p of allPlayers) {
+          const isConnected = p.connected === true;
+          const isChosenImpostor = isConnected && p.playerId === chosenImpostorId;
           updatedPlayers[p.playerId] = {
             ...p,
             status: 'active',
-            role: p.connected ? (p.playerId === impostorPlayer.playerId ? 'IMPOSTOR' : 'INNOCENT') : null,
+            role: isConnected ? (isChosenImpostor ? 'IMPOSTOR' : 'INNOCENT') : null,
             clue: null,
             clueSubmitted: false,
             voteTargetId: null,
@@ -711,7 +741,7 @@ export class FirestoreGameManager {
           secretWord,
           secretWordIndex: secretIndex,
           recentSecretWords: [...recentSecrets.slice(-15), secretWord],
-          impostorId: impostorPlayer.playerId,
+          impostorId: chosenImpostorId,
           impostorGuess: null,
           winner: null,
           winReason: null,
@@ -1070,8 +1100,10 @@ export class FirestoreGameManager {
           return { success: false, error: 'Only the host can start another round' };
         }
 
-        const connectedPlayers = Object.values(room.players).filter(p => p.connected);
-        if (connectedPlayers.length < 3) {
+        const allPlayers = Object.values(room.players || {});
+        // Only include players who are currently connected and active; eliminated players from previous rounds become eligible again
+        const activeEligiblePlayers = allPlayers.filter(p => p.connected === true);
+        if (activeEligiblePlayers.length < 3) {
           return { success: false, error: 'At least 3 players are required to start.' };
         }
 
@@ -1080,17 +1112,19 @@ export class FirestoreGameManager {
         const recentSecrets = room.recentSecretWords || [];
         const { words, secretWord, secretIndex } = selectRoundWords(categoryData, recentSecrets);
 
-        // Pick new Impostor randomly
-        const impostorIndex = Math.floor(Math.random() * connectedPlayers.length);
-        const impostorPlayer = connectedPlayers[impostorIndex];
+        // Authoritative unbiased Impostor selection for this new round
+        const impostorPlayer = selectAuthoritativeImpostor(activeEligiblePlayers);
+        const chosenImpostorId = impostorPlayer.playerId;
 
-        // Reset all players to 'active' on new round!
+        // Reset all players to 'active' on new round! Eliminated players from previous rounds become eligible again
         const updatedPlayers: Record<string, FirestorePlayer> = {};
-        for (const p of Object.values(room.players)) {
+        for (const p of allPlayers) {
+          const isConnected = p.connected === true;
+          const isChosenImpostor = isConnected && p.playerId === chosenImpostorId;
           updatedPlayers[p.playerId] = {
             ...p,
             status: 'active',
-            role: p.connected ? (p.playerId === impostorPlayer.playerId ? 'IMPOSTOR' : 'INNOCENT') : null,
+            role: isConnected ? (isChosenImpostor ? 'IMPOSTOR' : 'INNOCENT') : null,
             clue: null,
             clueSubmitted: false,
             voteTargetId: null,
@@ -1109,7 +1143,7 @@ export class FirestoreGameManager {
           secretWord,
           secretWordIndex: secretIndex,
           recentSecretWords: [...recentSecrets.slice(-15), secretWord],
-          impostorId: impostorPlayer.playerId,
+          impostorId: chosenImpostorId,
           impostorGuess: null,
           winner: null,
           winReason: null,

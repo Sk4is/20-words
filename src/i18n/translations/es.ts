@@ -162,7 +162,7 @@ export const es: Record<string, string> = {
   "header.clickToCopy": "Haz clic para copiar el código de sala",
   "header.copied": "¡Copiado!",
   "header.language": "Idioma",
-  "header.leaveRoom": "SALIR DE LA SALA",
+  "header.leaveRoom": "SALIR",
   "header.muteSound": "Silenciar sonido",
   "header.role.host": "Anfitrión",
   "header.role.impostor": "Impostor",

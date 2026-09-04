@@ -162,7 +162,7 @@ export const pt: Record<string, string> = {
   "header.clickToCopy": "Click to copy room code",
   "header.copied": "Copied!",
   "header.language": "Language",
-  "header.leaveRoom": "LEAVE ROOM",
+  "header.leaveRoom": "SAIR",
   "header.muteSound": "Mute sound",
   "header.role.host": "Host",
   "header.role.impostor": "Impostor",

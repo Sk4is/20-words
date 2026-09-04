@@ -162,7 +162,7 @@ export const de: Record<string, string> = {
   "header.clickToCopy": "Click to copy room code",
   "header.copied": "Copied!",
   "header.language": "Language",
-  "header.leaveRoom": "LEAVE ROOM",
+  "header.leaveRoom": "RAUS",
   "header.muteSound": "Mute sound",
   "header.role.host": "Host",
   "header.role.impostor": "Impostor",

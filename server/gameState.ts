@@ -1,4 +1,5 @@
 import { WebSocket } from 'ws';
+import crypto from 'crypto';
 import {
   ClientGameState,
   GamePhase,
@@ -283,9 +284,16 @@ export class GameManager {
     const categoryData = CATEGORIES[catIndex];
     const { words, secretWord, secretIndex } = selectRoundWords(categoryData);
 
-    // Pick random Impostor
-    const impostorIndex = Math.floor(Math.random() * activePlayers.length);
-    const impostorPlayer = activePlayers[impostorIndex];
+    // Pick random Impostor using Fisher-Yates and crypto.randomInt for uniform probability
+    const pool = [...activePlayers];
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = crypto.randomInt(0, i + 1);
+      const temp = pool[i];
+      pool[i] = pool[j];
+      pool[j] = temp;
+    }
+    const impostorIndex = crypto.randomInt(0, pool.length);
+    const impostorPlayer = pool[impostorIndex];
 
     room.roundNumber += 1;
     room.category = categoryData.name;
@@ -300,8 +308,9 @@ export class GameManager {
     room.tiedPlayerIds = [];
     room.eliminatedOption = null;
 
-    // Assign player roles and reset round state
+    // Assign player roles and reset round state (resetting any previously eliminated player to active)
     for (const player of room.players.values()) {
+      player.status = 'active';
       if (player.isConnected) {
         player.role = player.id === impostorPlayer.id ? 'IMPOSTOR' : 'INNOCENT';
       } else {
