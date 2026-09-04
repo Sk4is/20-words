@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
-import { gameManager } from './server/gameState';
+import { firestoreGameManager } from './server/firestoreGameManager';
 import { ClientAction } from './src/types/game';
 
 async function startServer() {
@@ -19,21 +19,26 @@ async function startServer() {
     res.json({ status: 'ok', timestamp: Date.now() });
   });
 
-  // Room check API
-  app.get('/api/room/:code', (req, res) => {
-    const code = req.params.code.toUpperCase();
-    const room = gameManager.getRoom(code);
-    if (!room) {
-      res.status(404).json({ exists: false, error: 'Room not found' });
-      return;
+  // Room check API - Authoritative Firestore lookup
+  app.get('/api/room/:code', async (req, res) => {
+    try {
+      const code = req.params.code.toUpperCase().trim();
+      const room = await firestoreGameManager.getRoom(code);
+      if (!room) {
+        res.status(404).json({ exists: false, error: 'Room not found' });
+        return;
+      }
+      const connectedCount = Object.values(room.players || {}).filter(p => p.connected).length;
+      res.json({
+        exists: true,
+        phase: room.currentPhase,
+        playerCount: connectedCount,
+        isFull: connectedCount >= 6
+      });
+    } catch (err: any) {
+      console.error('[DATABASE ERROR] Room lookup API error:', err);
+      res.status(500).json({ exists: false, error: 'Database error' });
     }
-    const connectedCount = Array.from(room.players.values()).filter(p => p.isConnected).length;
-    res.json({
-      exists: true,
-      phase: room.phase,
-      playerCount: connectedCount,
-      isFull: connectedCount >= 6
-    });
   });
 
   // WebSocket Server
@@ -63,74 +68,116 @@ async function startServer() {
     let activePlayerId: string | null = null;
     let activeRoomCode: string | null = null;
 
-    ws.on('message', (rawMessage: string) => {
+    ws.on('message', async (rawMessage: string) => {
       try {
         const action: ClientAction = JSON.parse(rawMessage.toString());
 
         switch (action.type) {
           case 'CREATE_ROOM': {
-            const { room, player } = gameManager.createRoom(action.playerName, ws, (action as any).playerId);
-            activePlayerId = player.id;
-            activeRoomCode = room.code;
+            try {
+              const { room, player } = await firestoreGameManager.createRoom(
+                action.playerName,
+                ws,
+                (action as any).playerId
+              );
+              activePlayerId = player.playerId;
+              activeRoomCode = room.roomCode;
 
-            ws.send(JSON.stringify({
-              type: 'ROOM_CREATED',
-              roomCode: room.code,
-              playerId: player.id
-            }));
+              ws.send(JSON.stringify({
+                type: 'ROOM_CREATED',
+                roomCode: room.roomCode,
+                playerId: player.playerId
+              }));
 
-            gameManager.broadcastRoomState(room);
+              const clientState = firestoreGameManager.getClientStateForPlayer(room, player.playerId);
+              ws.send(JSON.stringify({
+                type: 'SYNC_STATE',
+                state: clientState
+              }));
+            } catch (err: any) {
+              console.error('[CREATE ROOM ERROR]', err);
+              ws.send(JSON.stringify({
+                type: 'ERROR',
+                code: err.code || 'CREATE_ERROR',
+                message: err.message || 'Failed to create room'
+              }));
+            }
             break;
           }
 
           case 'JOIN_ROOM': {
-            const result = gameManager.joinRoom(action.roomCode, action.playerName, ws, action.playerId);
-            if ('error' in result) {
-              ws.send(JSON.stringify({ type: 'ERROR', message: result.error }));
-            } else {
-              activePlayerId = result.player.id;
-              activeRoomCode = result.room.code;
+            try {
+              const { room, player } = await firestoreGameManager.joinRoom(
+                action.roomCode,
+                action.playerName,
+                ws,
+                action.playerId
+              );
+              activePlayerId = player.playerId;
+              activeRoomCode = room.roomCode;
 
               ws.send(JSON.stringify({
                 type: 'ROOM_JOINED',
-                roomCode: result.room.code,
-                playerId: result.player.id
+                roomCode: room.roomCode,
+                playerId: player.playerId
               }));
 
-              gameManager.broadcastRoomState(result.room);
+              const clientState = firestoreGameManager.getClientStateForPlayer(room, player.playerId);
+              ws.send(JSON.stringify({
+                type: 'SYNC_STATE',
+                state: clientState
+              }));
+            } catch (err: any) {
+              ws.send(JSON.stringify({
+                type: 'ERROR',
+                code: err.code || 'ROOM_NOT_FOUND',
+                message: err.message || 'Room not found. Check the code and try again.'
+              }));
             }
             break;
           }
 
           case 'RECONNECT': {
-            const result = gameManager.joinRoom(action.roomCode, '', ws, action.playerId);
-            if ('error' in result) {
-              ws.send(JSON.stringify({ type: 'ERROR', message: result.error }));
-            } else {
-              activePlayerId = result.player.id;
-              activeRoomCode = result.room.code;
+            try {
+              const { room, player } = await firestoreGameManager.reconnect(
+                action.roomCode,
+                ws,
+                action.playerId
+              );
+              activePlayerId = player.playerId;
+              activeRoomCode = room.roomCode;
 
               ws.send(JSON.stringify({
                 type: 'ROOM_JOINED',
-                roomCode: result.room.code,
-                playerId: result.player.id
+                roomCode: room.roomCode,
+                playerId: player.playerId
               }));
 
-              gameManager.broadcastRoomState(result.room);
+              const clientState = firestoreGameManager.getClientStateForPlayer(room, player.playerId);
+              ws.send(JSON.stringify({
+                type: 'SYNC_STATE',
+                state: clientState
+              }));
+            } catch (err: any) {
+              ws.send(JSON.stringify({
+                type: 'ERROR',
+                code: err.code || 'ROOM_NOT_FOUND',
+                message: err.message || 'Room not found. Check the code and try again.'
+              }));
             }
             break;
           }
 
           case 'TOGGLE_READY': {
             if (activePlayerId && activeRoomCode) {
-              gameManager.toggleReady(activePlayerId, activeRoomCode);
+              await firestoreGameManager.toggleReady(activeRoomCode, activePlayerId);
             }
             break;
           }
 
           case 'START_GAME': {
             if (activePlayerId && activeRoomCode) {
-              const res = gameManager.startGame(activePlayerId, activeRoomCode);
+              const res = await firestoreGameManager.startGame(activeRoomCode, activePlayerId);
               if (!res.success && res.error) {
                 ws.send(JSON.stringify({ type: 'ERROR', message: res.error }));
               }
@@ -140,35 +187,35 @@ async function startServer() {
 
           case 'SUBMIT_CLUE': {
             if (activePlayerId && activeRoomCode) {
-              gameManager.submitClue(activePlayerId, activeRoomCode, action.clue);
+              await firestoreGameManager.submitClue(activeRoomCode, activePlayerId, action.clue);
             }
             break;
           }
 
           case 'START_VOTING': {
             if (activePlayerId && activeRoomCode) {
-              gameManager.startVotingPhase(activePlayerId, activeRoomCode);
+              await firestoreGameManager.endCluePhase(activeRoomCode);
             }
             break;
           }
 
           case 'SUBMIT_VOTE': {
             if (activePlayerId && activeRoomCode) {
-              gameManager.submitVote(activePlayerId, activeRoomCode, action.targetPlayerId);
+              await firestoreGameManager.submitVote(activeRoomCode, activePlayerId, action.targetPlayerId);
             }
             break;
           }
 
           case 'SUBMIT_IMPOSTOR_GUESS': {
             if (activePlayerId && activeRoomCode) {
-              gameManager.submitImpostorGuess(activePlayerId, activeRoomCode, action.word);
+              await firestoreGameManager.submitImpostorGuess(activePlayerId, activeRoomCode, action.word);
             }
             break;
           }
 
           case 'NEXT_ROUND': {
             if (activePlayerId && activeRoomCode) {
-              const res = gameManager.nextRound(activePlayerId, activeRoomCode);
+              const res = await firestoreGameManager.nextRound(activeRoomCode, activePlayerId);
               if (!res.success && res.error) {
                 ws.send(JSON.stringify({ type: 'ERROR', message: res.error }));
               }
@@ -178,7 +225,7 @@ async function startServer() {
 
           case 'LEAVE_ROOM': {
             if (activePlayerId && activeRoomCode) {
-              gameManager.leaveRoom(activePlayerId, activeRoomCode);
+              await firestoreGameManager.leaveRoom(activeRoomCode, activePlayerId);
               activePlayerId = null;
               activeRoomCode = null;
             }
@@ -190,8 +237,8 @@ async function startServer() {
       }
     });
 
-    ws.on('close', () => {
-      gameManager.handleDisconnect(ws);
+    ws.on('close', async () => {
+      await firestoreGameManager.handleSocketDisconnect(ws);
     });
 
     ws.on('error', (err: any) => {

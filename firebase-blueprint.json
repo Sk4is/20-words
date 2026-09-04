@@ -1,0 +1,39 @@
+{
+  "entities": {
+    "Room": {
+      "title": "Room",
+      "description": "Multiplayer game room state for 20 Words",
+      "type": "object",
+      "properties": {
+        "roomCode": { "type": "string", "description": "Unique uppercase 5-character room code" },
+        "createdAt": { "type": "number", "description": "Timestamp when the room was created" },
+        "hostPlayerId": { "type": "string", "description": "Player ID of the room host" },
+        "currentPhase": { "type": "string", "description": "Current game phase" },
+        "maxPlayers": { "type": "number", "description": "Maximum number of players allowed (6)" },
+        "players": { "type": "object", "description": "Map of player IDs to player records" },
+        "roundNumber": { "type": "number", "description": "Current round number" },
+        "category": { "type": "string", "description": "Category for current round" },
+        "words": { "type": "array", "description": "The 20 words for the round" },
+        "secretWord": { "type": "string", "description": "Secret word known to innocents" },
+        "secretWordIndex": { "type": "number", "description": "Index of the secret word (0-19)" },
+        "impostorId": { "type": "string", "description": "Player ID of the chosen impostor" },
+        "impostorGuess": { "type": "string", "description": "Guess made by the impostor" },
+        "roundEndTimestamp": { "type": "number", "description": "Timestamp when round clue phase ends" },
+        "revealEndTimestamp": { "type": "number", "description": "Timestamp when reveal phase ends" },
+        "tiedPlayerIds": { "type": "array", "description": "Player IDs involved in tiebreak" },
+        "eliminatedOption": { "type": "string", "description": "Eliminated player or skip" },
+        "winner": { "type": "string", "description": "Round winner role" },
+        "winReason": { "type": "string", "description": "Explanation of win" },
+        "pointsAwarded": { "type": "object", "description": "Points awarded this round" },
+        "updatedAt": { "type": "number", "description": "Timestamp when room was last modified" }
+      },
+      "required": ["roomCode", "createdAt", "hostPlayerId", "currentPhase", "maxPlayers", "players"]
+    }
+  },
+  "firestore": {
+    "/rooms/{roomCode}": {
+      "schema": { "$ref": "#/entities/Room" },
+      "description": "Active game rooms authoritative document"
+    }
+  }
+}
