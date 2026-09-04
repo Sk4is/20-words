@@ -39,6 +39,24 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   const missingPlayers = minPlayers - connectedCount;
   const currentDuration = gameState.clueDuration || 30;
 
+  const [sliderDuration, setSliderDuration] = useState<number>(currentDuration);
+  const isDraggingRef = React.useRef(false);
+  const debounceTimerRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  React.useEffect(() => {
+    if (!isDraggingRef.current) {
+      setSliderDuration(gameState.clueDuration || 30);
+    }
+  }, [gameState.clueDuration]);
+
+  React.useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, []);
+
   return (
     <div className="w-full max-w-xl mx-auto px-4 py-6 flex flex-col items-center">
       {/* Room Code Card */}
@@ -83,7 +101,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
             </h3>
           </div>
           <span className="px-3 py-1 rounded-full bg-[#1a1b4b] text-[#4cc9f0] text-sm font-black border border-[#4cc9f0]/40 font-mono shadow-inner">
-            {currentDuration}s
+            {sliderDuration}s
           </span>
         </div>
 
@@ -96,8 +114,28 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                 min={10}
                 max={120}
                 step={5}
-                value={currentDuration}
-                onChange={(e) => onSetClueDuration?.(Number(e.target.value))}
+                value={sliderDuration}
+                onPointerDown={() => {
+                  isDraggingRef.current = true;
+                }}
+                onPointerUp={(e) => {
+                  isDraggingRef.current = false;
+                  const val = Number((e.target as HTMLInputElement).value);
+                  if (debounceTimerRef.current) {
+                    clearTimeout(debounceTimerRef.current);
+                  }
+                  onSetClueDuration?.(val);
+                }}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  setSliderDuration(val);
+                  if (debounceTimerRef.current) {
+                    clearTimeout(debounceTimerRef.current);
+                  }
+                  debounceTimerRef.current = setTimeout(() => {
+                    onSetClueDuration?.(val);
+                  }, 250);
+                }}
                 className="w-full accent-[#4cc9f0] h-2 bg-[#1a1b4b] rounded-lg cursor-pointer"
               />
             </div>
@@ -108,9 +146,15 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                 <button
                   key={sec}
                   type="button"
-                  onClick={() => onSetClueDuration?.(sec)}
+                  onClick={() => {
+                    if (debounceTimerRef.current) {
+                      clearTimeout(debounceTimerRef.current);
+                    }
+                    setSliderDuration(sec);
+                    onSetClueDuration?.(sec);
+                  }}
                   className={`flex-1 py-1.5 px-2 rounded-xl text-xs font-mono font-black transition cursor-pointer ${
-                    currentDuration === sec
+                    sliderDuration === sec
                       ? 'bg-[#4cc9f0] text-[#1a1b4b] shadow-md'
                       : 'bg-[#1a1b4b] text-white/80 hover:bg-[#1a1b4b]/80 border border-white/10'
                   }`}
@@ -122,7 +166,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
           </div>
         ) : (
           <p className="text-xs text-white/70 font-medium">
-            {t('lobby.timerHostConfigured', { seconds: currentDuration })}
+            {t('lobby.timerHostConfigured', { seconds: sliderDuration })}
           </p>
         )}
       </div>

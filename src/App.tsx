@@ -143,8 +143,14 @@ export default function App() {
         {!gameState ? (
           <HomeView
             initialName={savedName}
-            onCreateRoom={createRoom}
-            onJoinRoom={joinRoom}
+            onCreateRoom={(name) => {
+              hasLeftRoomRef.current = false;
+              createRoom(name);
+            }}
+            onJoinRoom={(code, name) => {
+              hasLeftRoomRef.current = false;
+              joinRoom(code, name);
+            }}
             onOpenRules={() => setShowRules(true)}
             errorMessage={errorMessage}
             onClearError={clearError}

@@ -86,7 +86,7 @@ export type ClientAction =
   | { type: 'SUBMIT_VOTE'; targetPlayerId: string }
   | { type: 'SUBMIT_IMPOSTOR_GUESS'; word: string }
   | { type: 'NEXT_ROUND' }
-  | { type: 'LEAVE_ROOM' };
+  | { type: 'LEAVE_ROOM'; roomCode?: string; playerId?: string };
 
 // Server to Client Messages
 export type ServerMessage =
@@ -94,4 +94,5 @@ export type ServerMessage =
   | { type: 'ERROR'; message: string }
   | { type: 'ROOM_CREATED'; roomCode: string; playerId: string }
   | { type: 'ROOM_JOINED'; roomCode: string; playerId: string }
+  | { type: 'LEFT_ROOM' }
   | { type: 'TICK_WARN'; remainingSeconds: number };

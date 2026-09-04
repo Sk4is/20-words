@@ -68,6 +68,9 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     // Fallback to Spanish (mandatory fallback) if missing in target language
     if (!template && currentLanguage !== 'es') {
       template = TRANSLATION_MAP.es[key];
+      if (template && process.env.NODE_ENV !== 'production') {
+        console.warn(`Missing translation in '${currentLanguage}' for: ${key} (fell back to Spanish)`);
+      }
     }
 
     // Secondary fallback: check alias mappings between component keys and dictionary keys
@@ -102,7 +105,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     // Absolute fallback: ensure NO raw dot-notation key can ever appear visually
     if (!template) {
-      console.warn(`[i18n] Missing translation for key: "${key}"`);
+      console.warn(`Missing translation: ${key}`);
       // Strip namespace if present and capitalize words
       const parts = key.split('.');
       const rawText = parts[parts.length - 1]

@@ -22,7 +22,7 @@ import {
   PlayerStatus,
   WinReason
 } from '../src/types/game.js';
-import { CATEGORIES, selectRoundWords } from '../src/data/categories.js';
+import { CATEGORIES, selectRoundWords, getRandomCategory } from '../src/data/categories.js';
 
 export interface FirestorePlayer {
   playerId: string;
@@ -63,6 +63,7 @@ export interface FirestoreRoom {
   winner: 'INNOCENTS' | 'IMPOSTOR' | null;
   winReason: WinReason | null;
   pointsAwarded: Record<string, number>;
+  recentSecretWords?: string[];
   updatedAt: number;
 }
 
@@ -496,8 +497,45 @@ export class FirestoreGameManager {
    * Leave Room:
    * Explicitly remove player when clicking "SALIR DE LA SALA"
    */
-  public async leaveRoom(roomCode: string, playerId: string): Promise<void> {
+  public async leaveRoom(roomCode: string, playerId: string, ws?: WebSocket): Promise<void> {
     const code = roomCode.trim().toUpperCase();
+
+    // Dissociate socket immediately so no subsequent state broadcast is sent to it
+    if (ws) {
+      this.socketPlayerMap.delete(ws);
+      const sockets = this.roomSockets.get(code);
+      if (sockets) {
+        sockets.delete(ws);
+        if (sockets.size === 0) {
+          this.roomSockets.delete(code);
+          const unsub = this.roomListeners.get(code);
+          if (unsub) {
+            unsub();
+            this.roomListeners.delete(code);
+          }
+        }
+      }
+    } else {
+      for (const [sock, entry] of this.socketPlayerMap.entries()) {
+        if (entry.roomCode === code && entry.playerId === playerId) {
+          this.socketPlayerMap.delete(sock);
+          const sockets = this.roomSockets.get(code);
+          if (sockets) {
+            sockets.delete(sock);
+            if (sockets.size === 0) {
+              this.roomSockets.delete(code);
+              const unsub = this.roomListeners.get(code);
+              if (unsub) {
+                unsub();
+                this.roomListeners.delete(code);
+              }
+            }
+          }
+          break;
+        }
+      }
+    }
+
     const roomRef = doc(this.db, 'rooms', code);
 
     try {
@@ -582,27 +620,29 @@ export class FirestoreGameManager {
     const roomRef = doc(this.db, 'rooms', code);
 
     try {
-      return await runTransaction(this.db, async (tx) => {
-        const snap = await tx.get(roomRef);
-        if (!snap.exists()) return { success: false, error: 'Room not found' };
+      const snap = await getDoc(roomRef);
+      if (!snap.exists()) return { success: false, error: 'Room not found' };
 
-        const room = snap.data() as FirestoreRoom;
-        const player = room.players?.[playerId];
-        if (!player || !player.isHost) {
-          return { success: false, error: 'Only the host can configure the clue timer' };
-        }
+      const room = snap.data() as FirestoreRoom;
+      const player = room.players?.[playerId];
+      if (!player || !player.isHost) {
+        return { success: false, error: 'Only the host can configure the clue timer' };
+      }
 
-        // Clamp duration between 10 and 120 seconds
-        const clampedDuration = Math.min(120, Math.max(10, Math.round(duration)));
+      // Clamp duration between 10 and 120 seconds
+      const clampedDuration = Math.min(120, Math.max(10, Math.round(duration)));
 
-        tx.update(roomRef, {
-          clueDuration: clampedDuration,
-          updatedAt: Date.now()
-        });
-
-        console.log(`[TIMER CONFIG] Host ${player.name} updated clue timer to ${clampedDuration}s for room ${code}`);
+      if (room.clueDuration === clampedDuration) {
         return { success: true };
+      }
+
+      await updateDoc(roomRef, {
+        clueDuration: clampedDuration,
+        updatedAt: Date.now()
       });
+
+      console.log(`[TIMER CONFIG] Host ${player.name} updated clue timer to ${clampedDuration}s for room ${code}`);
+      return { success: true };
     } catch (err: any) {
       console.error(`[DATABASE ERROR] Set clue duration failed:`, err);
       return { success: false, error: err.message || 'Failed to update timer' };
@@ -637,10 +677,10 @@ export class FirestoreGameManager {
           return { success: false, error: 'All players must be ready before starting.' };
         }
 
-        // Pick category and words
-        const catIndex = Math.floor(Math.random() * CATEGORIES.length);
-        const categoryData = CATEGORIES[catIndex];
-        const { words, secretWord, secretIndex } = selectRoundWords(categoryData);
+        // Pick category and words, avoiding repeating the previous category
+        const categoryData = getRandomCategory(room.category);
+        const recentSecrets = room.recentSecretWords || [];
+        const { words, secretWord, secretIndex } = selectRoundWords(categoryData, recentSecrets);
 
         // Pick Impostor
         const impostorIndex = Math.floor(Math.random() * activePlayers.length);
@@ -670,6 +710,7 @@ export class FirestoreGameManager {
           words,
           secretWord,
           secretWordIndex: secretIndex,
+          recentSecretWords: [...recentSecrets.slice(-15), secretWord],
           impostorId: impostorPlayer.playerId,
           impostorGuess: null,
           winner: null,
@@ -1034,10 +1075,10 @@ export class FirestoreGameManager {
           return { success: false, error: 'At least 3 players are required to start.' };
         }
 
-        // Pick new category and words
-        const catIndex = Math.floor(Math.random() * CATEGORIES.length);
-        const categoryData = CATEGORIES[catIndex];
-        const { words, secretWord, secretIndex } = selectRoundWords(categoryData);
+        // Pick new category and words, avoiding repeating the previous category
+        const categoryData = getRandomCategory(room.category);
+        const recentSecrets = room.recentSecretWords || [];
+        const { words, secretWord, secretIndex } = selectRoundWords(categoryData, recentSecrets);
 
         // Pick new Impostor randomly
         const impostorIndex = Math.floor(Math.random() * connectedPlayers.length);
@@ -1067,6 +1108,7 @@ export class FirestoreGameManager {
           words,
           secretWord,
           secretWordIndex: secretIndex,
+          recentSecretWords: [...recentSecrets.slice(-15), secretWord],
           impostorId: impostorPlayer.playerId,
           impostorGuess: null,
           winner: null,
@@ -1203,6 +1245,10 @@ export class FirestoreGameManager {
       if (ws.readyState === WebSocket.OPEN) {
         const mapping = this.socketPlayerMap.get(ws);
         if (mapping) {
+          // If the player has left the room, do not send SYNC_STATE
+          if (!room.players || !room.players[mapping.playerId]) {
+            continue;
+          }
           const clientState = this.getClientStateForPlayer(room, mapping.playerId);
           ws.send(JSON.stringify({
             type: 'SYNC_STATE',

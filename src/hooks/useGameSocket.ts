@@ -30,6 +30,10 @@ export function useGameSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
   const prevPhaseRef = useRef<string | null>(null);
+  // Track intentional room leave so user is never re-added by auto-reconnect or lagging broadcasts
+  const hasIntentionallyLeftRef = useRef<boolean>(false);
+  const intentionallyLeftRoomsRef = useRef<Set<string>>(new Set());
+  const lastClueDurationSentRef = useRef<number | null>(null);
 
   const send = useCallback((action: ClientAction) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -62,10 +66,10 @@ export function useGameSocket() {
       setStatus('CONNECTED');
       setErrorMessage(null);
 
-      // Try reconnecting to previous room if any
+      // Try reconnecting to previous room if any and not intentionally left
       const savedRoom = localStorage.getItem('20words_room_code');
       const savedId = localStorage.getItem('20words_player_id');
-      if (savedRoom && savedId) {
+      if (savedRoom && savedId && !hasIntentionallyLeftRef.current && !intentionallyLeftRoomsRef.current.has(savedRoom)) {
         ws.send(JSON.stringify({
           type: 'RECONNECT',
           roomCode: savedRoom,
@@ -80,6 +84,22 @@ export function useGameSocket() {
 
         if (msg.type === 'SYNC_STATE') {
           const newState = msg.state;
+
+          // If intentionally left this room, ignore this snapshot
+          if (hasIntentionallyLeftRef.current || intentionallyLeftRoomsRef.current.has(newState.roomCode)) {
+            setGameState(null);
+            localStorage.removeItem('20words_room_code');
+            return;
+          }
+
+          const currentSavedId = localStorage.getItem('20words_player_id');
+          const isPlayerInRoom = newState.players?.some(p => p.id === myPlayerId || p.id === currentSavedId);
+          if (!isPlayerInRoom) {
+            setGameState(null);
+            localStorage.removeItem('20words_room_code');
+            return;
+          }
+
           setGameState(newState);
 
           // Phase transition sound effects
@@ -105,7 +125,15 @@ export function useGameSocket() {
           if (newState.roomCode) {
             localStorage.setItem('20words_room_code', newState.roomCode);
           }
+        } else if (msg.type === 'LEFT_ROOM') {
+          hasIntentionallyLeftRef.current = true;
+          setGameState(null);
+          localStorage.removeItem('20words_room_code');
         } else if (msg.type === 'ROOM_CREATED' || msg.type === 'ROOM_JOINED') {
+          hasIntentionallyLeftRef.current = false;
+          if (msg.roomCode) {
+            intentionallyLeftRoomsRef.current.delete(msg.roomCode);
+          }
           localStorage.setItem('20words_room_code', msg.roomCode);
           localStorage.setItem('20words_player_id', msg.playerId);
           setMyPlayerId(msg.playerId);
@@ -149,6 +177,8 @@ export function useGameSocket() {
   const createRoom = (playerName: string) => {
     const name = playerName.trim();
     if (!name) return;
+    hasIntentionallyLeftRef.current = false;
+    intentionallyLeftRoomsRef.current.clear();
     localStorage.setItem('20words_player_name', name);
     setSavedName(name);
     send({ type: 'CREATE_ROOM', playerName: name });
@@ -158,6 +188,8 @@ export function useGameSocket() {
     const name = playerName.trim();
     const code = roomCode.toUpperCase().trim();
     if (!name || !code) return;
+    hasIntentionallyLeftRef.current = false;
+    intentionallyLeftRoomsRef.current.delete(code);
     localStorage.setItem('20words_player_name', name);
     setSavedName(name);
     send({ type: 'JOIN_ROOM', roomCode: code, playerName: name, playerId: myPlayerId });
@@ -169,6 +201,8 @@ export function useGameSocket() {
   };
 
   const setClueDuration = (duration: number) => {
+    if (lastClueDurationSentRef.current === duration) return;
+    lastClueDurationSentRef.current = duration;
     sound.playPop();
     send({ type: 'SET_CLUE_DURATION', duration });
   };
@@ -205,9 +239,19 @@ export function useGameSocket() {
 
   const leaveRoom = () => {
     sound.playPop();
+    hasIntentionallyLeftRef.current = true;
+    const currentCode = gameState?.roomCode || localStorage.getItem('20words_room_code');
+    if (currentCode) {
+      intentionallyLeftRoomsRef.current.add(currentCode.toUpperCase().trim());
+    }
     localStorage.removeItem('20words_room_code');
-    send({ type: 'LEAVE_ROOM' });
+    send({
+      type: 'LEAVE_ROOM',
+      roomCode: currentCode || undefined,
+      playerId: myPlayerId || localStorage.getItem('20words_player_id') || undefined
+    });
     setGameState(null);
+    setErrorMessage(null);
   };
 
   const clearError = () => {

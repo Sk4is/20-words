@@ -231,10 +231,15 @@ async function startServer() {
           }
 
           case 'LEAVE_ROOM': {
-            if (activePlayerId && activeRoomCode) {
-              await firestoreGameManager.leaveRoom(activeRoomCode, activePlayerId);
-              activePlayerId = null;
-              activeRoomCode = null;
+            const rCode = activeRoomCode || action.roomCode;
+            const pId = activePlayerId || action.playerId;
+            activePlayerId = null;
+            activeRoomCode = null;
+            if (rCode && pId) {
+              await firestoreGameManager.leaveRoom(rCode, pId, ws);
+            }
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'LEFT_ROOM' }));
             }
             break;
           }
