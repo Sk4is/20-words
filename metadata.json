@@ -1,0 +1,6 @@
+{
+  "name": "20 Words",
+  "description": "A fast, polished real-time multiplayer social deduction party game for 3 to 6 players.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
