@@ -1,14 +1,35 @@
 {
   "name": "20 Words",
   "short_name": "20 Words",
+  "description": "A fast, polished real-time multiplayer social deduction party game for 3 to 6 players.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a1b4b",
+  "theme_color": "#1a1b4b",
   "icons": [
     {
-      "src": "/logo/20-words-logo.png",
-      "sizes": "192x192 512x512",
-      "type": "image/png"
+      "src": "/logo/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/logo/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
-  ],
-  "theme_color": "#1a1b4b",
-  "background_color": "#1a1b4b",
-  "display": "standalone"
+  ]
 }
