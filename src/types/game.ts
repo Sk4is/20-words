@@ -91,8 +91,9 @@ export type ClientAction =
 // Server to Client Messages
 export type ServerMessage =
   | { type: 'SYNC_STATE'; state: ClientGameState }
-  | { type: 'ERROR'; message: string }
+  | { type: 'ERROR'; message: string; code?: string }
   | { type: 'ROOM_CREATED'; roomCode: string; playerId: string }
   | { type: 'ROOM_JOINED'; roomCode: string; playerId: string }
   | { type: 'LEFT_ROOM' }
+  | { type: 'ROOM_CLOSED'; reason: string; message: string }
   | { type: 'TICK_WARN'; remainingSeconds: number };

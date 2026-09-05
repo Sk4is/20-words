@@ -1,0 +1,14 @@
+{
+  "name": "20 Words",
+  "short_name": "20 Words",
+  "icons": [
+    {
+      "src": "/logo/20-words-logo.png",
+      "sizes": "192x192 512x512",
+      "type": "image/png"
+    }
+  ],
+  "theme_color": "#1a1b4b",
+  "background_color": "#1a1b4b",
+  "display": "standalone"
+}

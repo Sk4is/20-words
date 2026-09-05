@@ -177,14 +177,23 @@ export class GameManager {
           player.ws = null;
           player.lastActive = Date.now();
 
-          // If the disconnected player was the host, transfer host to next connected player
+          // If the disconnected player was the host, close the room immediately for all players
           if (player.isHost) {
-            const nextHost = Array.from(room.players.values()).find(p => p.isConnected && p.id !== player.id);
-            if (nextHost) {
-              player.isHost = false;
-              nextHost.isHost = true;
-              room.hostId = nextHost.id;
+            if (room.phaseTimer) {
+              clearTimeout(room.phaseTimer);
+              room.phaseTimer = null;
             }
+            for (const p of room.players.values()) {
+              if (p.ws && p.ws.readyState === WebSocket.OPEN && p.id !== player.id) {
+                p.ws.send(JSON.stringify({
+                  type: 'ROOM_CLOSED',
+                  reason: 'HOST_LEFT',
+                  message: 'The host has left. The room has been closed.'
+                }));
+              }
+            }
+            this.rooms.delete(room.code);
+            return;
           }
 
           // If disconnected while in LOBBY, remove player immediately so no ghost or duplicate players remain
@@ -582,13 +591,23 @@ export class GameManager {
     const player = room.players.get(playerId);
     if (!player) return;
 
-    // If the leaving player was the host, transfer host/admin privileges automatically to another connected player
+    // If the leaving player was the host, close the room immediately for all players
     if (player.isHost) {
-      const nextHost = Array.from(room.players.values()).find(p => p.isConnected && p.id !== playerId);
-      if (nextHost) {
-        nextHost.isHost = true;
-        room.hostId = nextHost.id;
+      if (room.phaseTimer) {
+        clearTimeout(room.phaseTimer);
+        room.phaseTimer = null;
       }
+      for (const p of room.players.values()) {
+        if (p.ws && p.ws.readyState === WebSocket.OPEN && p.id !== playerId) {
+          p.ws.send(JSON.stringify({
+            type: 'ROOM_CLOSED',
+            reason: 'HOST_LEFT',
+            message: 'The host has left. The room has been closed.'
+          }));
+        }
+      }
+      this.rooms.delete(room.code);
+      return;
     }
 
     // Remove that player from the current room in real time

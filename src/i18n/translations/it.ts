@@ -119,6 +119,7 @@ export const it: Record<string, string> = {
   "eliminated.title": "YOU WERE ELIMINATED!",
   "errors.allMustBeReady": "All players must be ready before starting.",
   "errors.generic": "An unexpected error occurred.",
+  "errors.hostLeftRoomClosed": "L'host è uscito. La stanza è stata chiusa.",
   "errors.minPlayersRequired": "At least 3 players are required to start.",
   "errors.onlyHostCanNextRound": "Only the host can start the next round.",
   "errors.onlyHostCanStart": "Only the host can start the game.",

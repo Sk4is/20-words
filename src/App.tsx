@@ -73,8 +73,10 @@ export default function App() {
         );
       }
     } else {
+      setShowConfirmLeave(false);
       if (currentRoomCodeRef.current !== null) {
         currentRoomCodeRef.current = null;
+        hasLeftRoomRef.current = true;
         const url = new URL(window.location.href);
         if (url.searchParams.has('room')) {
           url.searchParams.delete('room');

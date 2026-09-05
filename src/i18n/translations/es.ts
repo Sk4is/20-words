@@ -119,6 +119,7 @@ export const es: Record<string, string> = {
   "eliminated.title": "¡HAS SIDO ELIMINADO!",
   "errors.allMustBeReady": "Todos los jugadores deben estar listos antes de empezar.",
   "errors.generic": "Ha ocurrido un error inesperado.",
+  "errors.hostLeftRoomClosed": "El anfitrión ha salido. La sala se ha cerrado.",
   "errors.minPlayersRequired": "Se requieren al menos 3 jugadores para comenzar.",
   "errors.onlyHostCanNextRound": "Solo el anfitrión puede iniciar la siguiente ronda.",
   "errors.onlyHostCanStart": "Solo el anfitrión puede iniciar la partida.",

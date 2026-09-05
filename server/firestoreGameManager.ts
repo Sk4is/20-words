@@ -65,6 +65,8 @@ export interface FirestoreRoom {
   winReason: WinReason | null;
   pointsAwarded: Record<string, number>;
   recentSecretWords?: string[];
+  isClosed?: boolean;
+  closedReason?: string | null;
   updatedAt: number;
 }
 
@@ -405,11 +407,17 @@ export class FirestoreGameManager {
         if (!snapshot.exists()) {
           console.log(`[REALTIME SYNC] Room ${roomCode} was removed or does not exist`);
           this.roomCache.delete(roomCode);
-          this.broadcastRoomNotFound(roomCode);
+          this.broadcastRoomClosed(roomCode, 'HOST_LEFT');
           return;
         }
 
         const room = snapshot.data() as FirestoreRoom;
+        if (room.isClosed || room.closedReason === 'HOST_LEFT') {
+          console.log(`[REALTIME SYNC] Room ${roomCode} was closed (host left)`);
+          this.roomCache.delete(roomCode);
+          this.broadcastRoomClosed(roomCode, 'HOST_LEFT');
+          return;
+        }
         this.roomCache.set(roomCode, room);
         console.log(`[REALTIME SYNC] Snapshot received for room ${roomCode}, phase: ${room.currentPhase}, players: ${Object.keys(room.players || {}).length}`);
 
@@ -454,6 +462,62 @@ export class FirestoreGameManager {
   }
 
   /**
+   * Close a room completely when the host leaves:
+   * - Marks room closed and deletes the room from Firestore
+   * - Immediately notifies all connected players that the room has closed
+   * - Cleans up listeners, timers, and socket mappings
+   * - Ensures no host privileges are transferred
+   */
+  public async closeRoomDueToHostLeave(roomCode: string, hostPlayerId: string, hostWs?: WebSocket): Promise<void> {
+    const code = roomCode.trim().toUpperCase();
+    console.log(`[HOST LEAVE] Host ${hostPlayerId} left room ${code}. Closing room immediately for all players.`);
+
+    // 1. Unsubscribe Firestore snapshot listener immediately so we handle notifications authoritatively
+    const unsub = this.roomListeners.get(code);
+    if (unsub) {
+      unsub();
+      this.roomListeners.delete(code);
+    }
+
+    // 2. Clear any active phase timer
+    if (this.roomTimers.has(code)) {
+      clearTimeout(this.roomTimers.get(code)!);
+      this.roomTimers.delete(code);
+    }
+
+    // 3. Notify all connected sockets in this room
+    const sockets = this.roomSockets.get(code);
+    if (sockets) {
+      for (const ws of sockets) {
+        if (ws.readyState === WebSocket.OPEN) {
+          if (hostWs && ws === hostWs) {
+            ws.send(JSON.stringify({ type: 'LEFT_ROOM' }));
+          } else {
+            ws.send(JSON.stringify({
+              type: 'ROOM_CLOSED',
+              reason: 'HOST_LEFT',
+              message: 'The host has left. The room has been closed.'
+            }));
+          }
+        }
+        this.socketPlayerMap.delete(ws);
+      }
+      this.roomSockets.delete(code);
+    }
+
+    this.roomCache.delete(code);
+
+    // 4. Delete the room from Firestore
+    try {
+      const roomRef = doc(this.db, 'rooms', code);
+      await deleteDoc(roomRef);
+      console.log(`[ROOM DELETED] Room ${code} successfully deleted from Firestore because host left.`);
+    } catch (err) {
+      console.error(`[DATABASE ERROR] Failed to delete room ${code} on host leave:`, err);
+    }
+  }
+
+  /**
    * Handle socket disconnect
    */
   public async handleSocketDisconnect(ws: WebSocket): Promise<void> {
@@ -468,7 +532,6 @@ export class FirestoreGameManager {
       sockets.delete(ws);
       if (sockets.size === 0) {
         this.roomSockets.delete(roomCode);
-        // Unsubscribe from Firestore snapshot if no local players remain on this instance
         const unsub = this.roomListeners.get(roomCode);
         if (unsub) {
           unsub();
@@ -479,38 +542,40 @@ export class FirestoreGameManager {
 
     console.log(`[DISCONNECT] Socket closed for player ${playerId} in room ${roomCode}`);
 
-    // Update connection status in Firestore
     try {
       const roomRef = doc(this.db, 'rooms', roomCode);
+      const snap = await getDoc(roomRef);
+      if (!snap.exists()) return;
+
+      const room = snap.data() as FirestoreRoom;
+      const player = room.players?.[playerId];
+      if (!player) return;
+
+      const isHost = room.hostPlayerId === playerId || player.isHost === true;
+
+      // If the HOST disconnects/leaves for any reason, close the room immediately for everyone!
+      // Do NOT transfer host privileges to another player.
+      if (isHost) {
+        await this.closeRoomDueToHostLeave(roomCode, playerId, ws);
+        return;
+      }
+
+      // Non-host player disconnected: mark connected = false without changing host
       await runTransaction(this.db, async (tx) => {
-        const snap = await tx.get(roomRef);
-        if (!snap.exists()) return;
+        const txSnap = await tx.get(roomRef);
+        if (!txSnap.exists()) return;
 
-        const room = snap.data() as FirestoreRoom;
-        if (!room.players || !room.players[playerId]) return;
+        const txRoom = txSnap.data() as FirestoreRoom;
+        if (!txRoom.players || !txRoom.players[playerId]) return;
 
-        const player = { ...room.players[playerId] };
-        player.connected = false;
-        player.lastActive = Date.now();
+        const p = { ...txRoom.players[playerId] };
+        p.connected = false;
+        p.lastActive = Date.now();
 
-        // If disconnected player was host, transfer host to next connected player
-        let updatedHostId = room.hostPlayerId;
-        const updatedPlayers = { ...room.players, [playerId]: player };
+        const updatedPlayers = { ...txRoom.players, [playerId]: p };
 
-        if (player.isHost) {
-          const nextHost = Object.values(updatedPlayers).find(p => p.connected && p.playerId !== playerId);
-          if (nextHost) {
-            player.isHost = false;
-            nextHost.isHost = true;
-            updatedHostId = nextHost.playerId;
-            updatedPlayers[nextHost.playerId] = nextHost;
-          }
-        }
-
-        // Note: Do NOT immediately delete player during temporary disconnects so they can reconnect!
         tx.update(roomRef, {
           players: updatedPlayers,
-          hostPlayerId: updatedHostId,
           updatedAt: Date.now()
         });
       });
@@ -521,63 +586,80 @@ export class FirestoreGameManager {
 
   /**
    * Leave Room:
-   * Explicitly remove player when clicking "SALIR DE LA SALA"
+   * Explicitly remove player when clicking "SALIR"
+   * If the host leaves, the entire room is closed immediately and all players are returned to the main menu.
    */
   public async leaveRoom(roomCode: string, playerId: string, ws?: WebSocket): Promise<void> {
     const code = roomCode.trim().toUpperCase();
-
-    // Dissociate socket immediately so no subsequent state broadcast is sent to it
-    if (ws) {
-      this.socketPlayerMap.delete(ws);
-      const sockets = this.roomSockets.get(code);
-      if (sockets) {
-        sockets.delete(ws);
-        if (sockets.size === 0) {
-          this.roomSockets.delete(code);
-          const unsub = this.roomListeners.get(code);
-          if (unsub) {
-            unsub();
-            this.roomListeners.delete(code);
-          }
-        }
-      }
-    } else {
-      for (const [sock, entry] of this.socketPlayerMap.entries()) {
-        if (entry.roomCode === code && entry.playerId === playerId) {
-          this.socketPlayerMap.delete(sock);
-          const sockets = this.roomSockets.get(code);
-          if (sockets) {
-            sockets.delete(sock);
-            if (sockets.size === 0) {
-              this.roomSockets.delete(code);
-              const unsub = this.roomListeners.get(code);
-              if (unsub) {
-                unsub();
-                this.roomListeners.delete(code);
-              }
-            }
-          }
-          break;
-        }
-      }
-    }
-
     const roomRef = doc(this.db, 'rooms', code);
 
     try {
-      await runTransaction(this.db, async (tx) => {
-        const snap = await tx.get(roomRef);
-        if (!snap.exists()) return;
+      const snap = await getDoc(roomRef);
+      if (!snap.exists()) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'LEFT_ROOM' }));
+        }
+        return;
+      }
 
-        const room = snap.data() as FirestoreRoom;
-        const players = { ...room.players };
+      const room = snap.data() as FirestoreRoom;
+      const leavingPlayer = room.players?.[playerId];
+      const isHost = room.hostPlayerId === playerId || leavingPlayer?.isHost === true;
+
+      // If the HOST leaves for any reason, the entire room must close immediately for all players!
+      // Do NOT transfer host privileges to another player.
+      if (isHost) {
+        await this.closeRoomDueToHostLeave(code, playerId, ws);
+        return;
+      }
+
+      // Non-host player leaves:
+      // Dissociate socket immediately so no subsequent state broadcast is sent to it
+      if (ws) {
+        this.socketPlayerMap.delete(ws);
+        const sockets = this.roomSockets.get(code);
+        if (sockets) {
+          sockets.delete(ws);
+          if (sockets.size === 0) {
+            this.roomSockets.delete(code);
+            const unsub = this.roomListeners.get(code);
+            if (unsub) {
+              unsub();
+              this.roomListeners.delete(code);
+            }
+          }
+        }
+      } else {
+        for (const [sock, entry] of this.socketPlayerMap.entries()) {
+          if (entry.roomCode === code && entry.playerId === playerId) {
+            this.socketPlayerMap.delete(sock);
+            const sockets = this.roomSockets.get(code);
+            if (sockets) {
+              sockets.delete(sock);
+              if (sockets.size === 0) {
+                this.roomSockets.delete(code);
+                const unsub = this.roomListeners.get(code);
+                if (unsub) {
+                  unsub();
+                  this.roomListeners.delete(code);
+                }
+              }
+            }
+            break;
+          }
+        }
+      }
+
+      await runTransaction(this.db, async (tx) => {
+        const txSnap = await tx.get(roomRef);
+        if (!txSnap.exists()) return;
+
+        const txRoom = txSnap.data() as FirestoreRoom;
+        const players = { ...txRoom.players };
         if (!players[playerId]) return;
 
-        const leavingPlayer = players[playerId];
         delete players[playerId];
-
         const remainingPlayers = Object.values(players);
-        const remainingConnected = remainingPlayers.filter(p => p.connected);
 
         // If no players remain, clean up room
         if (remainingPlayers.length === 0) {
@@ -586,23 +668,17 @@ export class FirestoreGameManager {
           return;
         }
 
-        let updatedHostId = room.hostPlayerId;
-        // Transfer host if leaving player was host
-        if (leavingPlayer.isHost && remainingConnected.length > 0) {
-          const nextHost = remainingConnected[0];
-          nextHost.isHost = true;
-          updatedHostId = nextHost.playerId;
-          players[nextHost.playerId] = nextHost;
-        }
-
         tx.update(roomRef, {
           players,
-          hostPlayerId: updatedHostId,
           updatedAt: Date.now()
         });
 
         console.log(`[LEAVE ROOM] Player ${playerId} left room ${code}. Remaining: ${Object.keys(players).length}`);
       });
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'LEFT_ROOM' }));
+      }
     } catch (err) {
       console.error(`[DATABASE ERROR] Leave room failed on Firestore transaction:`, err);
     }
@@ -1291,6 +1367,40 @@ export class FirestoreGameManager {
         }
       }
     }
+  }
+
+  /**
+   * Broadcast room closure to all local sockets connected to this room and clean up resources
+   */
+  public broadcastRoomClosed(roomCode: string, reason: string = 'HOST_LEFT') {
+    const code = roomCode.trim().toUpperCase();
+    const sockets = this.roomSockets.get(code);
+    if (sockets) {
+      for (const ws of sockets) {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'ROOM_CLOSED',
+            reason,
+            message: 'The host has left. The room has been closed.'
+          }));
+        }
+        this.socketPlayerMap.delete(ws);
+      }
+      this.roomSockets.delete(code);
+    }
+
+    const unsub = this.roomListeners.get(code);
+    if (unsub) {
+      unsub();
+      this.roomListeners.delete(code);
+    }
+
+    if (this.roomTimers.has(code)) {
+      clearTimeout(this.roomTimers.get(code)!);
+      this.roomTimers.delete(code);
+    }
+
+    this.roomCache.delete(code);
   }
 
   /**

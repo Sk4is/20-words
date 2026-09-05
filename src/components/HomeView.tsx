@@ -29,6 +29,17 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
   const getLocalizedError = (msg: string | null): string | null => {
     if (!msg) return null;
+    if (
+      msg.includes('The host has left') ||
+      msg.includes('anfitrión ha salido') ||
+      msg.includes('hôte est parti') ||
+      msg.includes('Host hat') ||
+      msg.includes('host è uscito') ||
+      msg.includes('anfitrião saiu') ||
+      msg === 'HOST_LEFT_ROOM_CLOSED'
+    ) {
+      return t('errors.hostLeftRoomClosed');
+    }
     if (msg.includes('Room not found')) return t('errors.roomNotFound');
     if (msg.includes('Room is full')) return t('errors.roomFull');
     if (msg.includes('round is currently in progress')) return t('errors.roundInProgress');

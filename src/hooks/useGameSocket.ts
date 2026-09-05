@@ -129,6 +129,16 @@ export function useGameSocket() {
           hasIntentionallyLeftRef.current = true;
           setGameState(null);
           localStorage.removeItem('20words_room_code');
+        } else if (msg.type === 'ROOM_CLOSED') {
+          hasIntentionallyLeftRef.current = true;
+          const currentCode = gameState?.roomCode || localStorage.getItem('20words_room_code');
+          if (currentCode) {
+            intentionallyLeftRoomsRef.current.add(currentCode.toUpperCase().trim());
+          }
+          localStorage.removeItem('20words_room_code');
+          setGameState(null);
+          setErrorMessage(msg.message || 'The host has left. The room has been closed.');
+          sound.vibrate(80);
         } else if (msg.type === 'ROOM_CREATED' || msg.type === 'ROOM_JOINED') {
           hasIntentionallyLeftRef.current = false;
           if (msg.roomCode) {
@@ -140,6 +150,23 @@ export function useGameSocket() {
           setErrorMessage(null);
           sound.playPop();
         } else if (msg.type === 'ERROR') {
+          if (
+            msg.code === 'HOST_LEFT_ROOM_CLOSED' ||
+            msg.message.includes('The host has left') ||
+            msg.message.includes('El anfitrión ha salido') ||
+            msg.message.includes('hôte est parti') ||
+            msg.message.includes('Host hat') ||
+            msg.message.includes('host è uscito') ||
+            msg.message.includes('anfitrião saiu')
+          ) {
+            hasIntentionallyLeftRef.current = true;
+            const currentCode = gameState?.roomCode || localStorage.getItem('20words_room_code');
+            if (currentCode) {
+              intentionallyLeftRoomsRef.current.add(currentCode.toUpperCase().trim());
+            }
+            localStorage.removeItem('20words_room_code');
+            setGameState(null);
+          }
           setErrorMessage(msg.message);
           sound.vibrate(80);
         }
