@@ -143,20 +143,62 @@ export const CATEGORIES: CategoryData[] = [
     ]
   },
   {
-    name: 'Football Players',
-    nameEs: 'Futbolistas',
-    emoji: '⚽',
-    description: 'Estrellas y leyendas del fútbol',
+    name: 'Fruits',
+    nameEs: 'Frutas',
+    emoji: '🍎',
+    description: 'Frutas frescas, deliciosas y saludables',
     words: [
-      'Messi', 'Cristiano Ronaldo', 'Mbappé', 'Haaland', 'Lamine Yamal', 'Neymar', 'Vinícius Jr.', 'Modrić', 'Iniesta', 'Xavi',
-      'Zidane', 'Ronaldinho', 'Maradona', 'Pelé', 'Bellingham', 'Rodri', 'De Bruyne', 'Benzema', 'Lewandowski', 'Luis Suárez',
-      'Sergio Ramos', 'Casillas', 'Buffon', 'Neuer', 'Courtois', 'Ter Stegen', 'Alisson', 'Carvajal', 'Kroos', 'Busquets',
-      'Casemiro', 'Gavi', 'Pedri', 'Valverde', 'Camavinga', 'Tchouaméni', 'Griezmann', 'Morata', 'Nico Williams', 'Julián Álvarez',
-      'Lautaro Martínez', 'Dybala', 'Di María', 'Dibu Martínez', 'Bernardo Silva', 'Bruno Fernandes', 'Salah', 'Mané', 'Son Heung-min', 'Harry Kane',
-      'Saka', 'Foden', 'Palmer', 'Declan Rice', 'Van Dijk', 'Rüdiger', 'Saliba', 'Theo Hernández', 'Alphonso Davies', 'Hakimi',
-      'Puyol', 'Piqué', 'Roberto Carlos', 'Cafú', 'Dani Alves', 'Maldini', 'Cannavaro', 'Beckenbauer', 'Cruyff', 'Ronaldo Nazário',
-      'Romário', 'Henry', 'Kaká', 'Rivaldo', 'Figo', 'Raúl González', 'David Villa', 'Fernando Torres', 'Agüero', 'Ibrahimović',
-      'Rooney', 'Beckham'
+      'Manzana', 'Plátano', 'Fresa', 'Naranja', 'Limón', 'Sandía', 'Melón', 'Uva', 'Piña', 'Melocotón',
+      'Pera', 'Cereza', 'Kiwi', 'Mango', 'Mandarina', 'Aguacate', 'Coco', 'Ciruela', 'Granada', 'Higo',
+      'Frambuesa', 'Arándano', 'Mora', 'Albaricoque', 'Papaya', 'Maracuyá', 'Lima', 'Pomelo', 'Dátil', 'Nectarina',
+      'Caqui', 'Guayaba'
+    ]
+  },
+  {
+    name: 'Sweets & Snacks',
+    nameEs: 'Dulces y snacks',
+    emoji: '🍫',
+    description: 'Golosinas, aperitivos, chocolates y picoteo',
+    words: [
+      'Palomitas', 'Patatas fritas', 'Chocolate', 'Gominolas', 'Chicle', 'Piruleta', 'Caramelo', 'Galletas', 'Donut', 'Regaliz',
+      'Pipas', 'Frutos secos', 'Cacahuetes', 'Pistachos', 'Algodón de azúcar', 'Bombones', 'Trufas', 'Nutella', 'Nocilla', 'Oreo',
+      'KitKat', 'Kinder Bueno', 'M&M\'s', 'Lacasitos', 'Conguitos', 'Chupa Chups', 'Pringles', 'Doritos', 'Cheetos', 'Ruffles',
+      'Nachos', 'Gusanitos', 'Turrón', 'Mazapán', 'Barquillo', 'Gofre'
+    ]
+  },
+  {
+    name: 'Social Media',
+    nameEs: 'Redes sociales',
+    emoji: '📱',
+    description: 'Redes sociales, aplicaciones y plataformas de comunicación',
+    words: [
+      'WhatsApp', 'Instagram', 'TikTok', 'YouTube', 'Twitter (X)', 'Facebook', 'Twitch', 'Discord', 'Telegram', 'Snapchat',
+      'Reddit', 'Pinterest', 'LinkedIn', 'Spotify', 'BeReal', 'Tinder', 'Threads', 'Skype', 'Zoom', 'Messenger',
+      'Tumblr', 'SoundCloud', 'Duolingo', 'Strava', 'Kick', 'Wallapop', 'Vinted', 'Milanuncios'
+    ]
+  },
+  {
+    name: 'Superheroes & Villains',
+    nameEs: 'Superhéroes y villanos',
+    emoji: '🦸',
+    description: 'Superhéroes y supervillanos del cómic y del cine',
+    words: [
+      'Batman', 'Spider-Man', 'Superman', 'Iron Man', 'Hulk', 'Thor', 'Capitán América', 'Joker', 'Thanos', 'Wonder Woman',
+      'Deadpool', 'Flash', 'Wolverine (Lobezno)', 'Venom', 'Loki', 'Black Panther', 'Doctor Strange', 'Viuda Negra', 'Ojo de Halcón', 'Duende Verde',
+      'Harley Quinn', 'Catwoman', 'Pingüino', 'Enigma (Riddler)', 'Dos Caras', 'Magneto', 'Aquaman', 'Robin', 'Ant-Man', 'Capitana Marvel',
+      'Bruja Escarlata', 'Visión', 'Groot', 'Star-Lord', 'Ultron', 'Carnage (Matanza)', 'Bane', 'Hiedra Venenosa'
+    ]
+  },
+  {
+    name: 'Cartoon Series',
+    nameEs: 'Series de dibujos animados',
+    emoji: '📺',
+    description: 'Series animadas y dibujos de la televisión',
+    words: [
+      'Los Simpson', 'Bob Esponja', 'Doraemon', 'Shin-chan', 'Dragon Ball', 'Pokémon', 'Tom y Jerry', 'Scooby-Doo', 'Padre de familia', 'Futurama',
+      'Phineas y Ferb', 'Las Supernenas', 'Los Picapiedra', 'Looney Tunes', 'Hora de Aventuras', 'El asombroso mundo de Gumball', 'Historias Corrientes', 'Ben 10', 'Oliver y Benji', 'Naruto',
+      'Rick y Morty', 'El Inspector Gadget', 'Los Pitufos', 'Garfield', 'Popeye', 'Teen Titans', 'Agallas el perro cobarde', 'El laboratorio de Dexter', 'Johnny Bravo', 'South Park',
+      'Peppa Pig', 'La Patrulla Canina', 'La Pantera Rosa', 'Los Rugrats'
     ]
   },
   {
@@ -243,6 +285,7 @@ export const CATEGORIES: CategoryData[] = [
       'Bruno Mars',
       'Rihanna',
       'Beyoncé',
+
       'Lady Gaga',
       'Ariana Grande',
       'Billie Eilish',
@@ -252,7 +295,76 @@ export const CATEGORIES: CategoryData[] = [
       'Shakira',
       'Bad Bunny',
       'Rosalía',
-      'Freddie Mercury'
+      'Freddie Mercury',
+
+      'Adele',
+      'Britney Spears',
+      'Miley Cyrus',
+      'Katy Perry',
+      'Dua Lipa',
+      'Selena Gomez',
+      'Jennifer Lopez',
+      'Snoop Dogg',
+      '50 Cent',
+      'Kendrick Lamar',
+
+      'Elvis Presley',
+      'Elton John',
+      'David Bowie',
+      'Prince',
+      'Bob Marley',
+      'Whitney Houston',
+      'Amy Winehouse',
+      'Madonna',
+      'Cher',
+      'Sting',
+
+      'Harry Styles',
+      'Shawn Mendes',
+      'Sam Smith',
+      'Sia',
+      'Avril Lavigne',
+      'Christina Aguilera',
+      'Mariah Carey',
+      'Céline Dion',
+      'Pitbull',
+      'Usher',
+
+      'Karol G',
+      'J Balvin',
+      'Maluma',
+      'Daddy Yankee',
+      'Ozuna',
+      'Anuel AA',
+      'Rauw Alejandro',
+      'Quevedo',
+      'Myke Towers',
+      'Nicky Jam',
+
+      'Romeo Santos',
+      'Luis Fonsi',
+      'Enrique Iglesias',
+      'Ricky Martin',
+      'Marc Anthony',
+      'Juanes',
+      'Camilo',
+      'Sebastián Yatra',
+      'Manuel Turizo',
+      'Feid',
+
+      'Aitana',
+      'David Bisbal',
+      'Alejandro Sanz',
+      'Pablo Alborán',
+      'Melendi',
+      'Estopa',
+      'Lola Índigo',
+      'Rels B',
+      'C. Tangana',
+      'Dani Martín',
+
+      'Julio Iglesias',
+      'Raphael'
     ]
   },
   {
