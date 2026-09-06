@@ -23,6 +23,7 @@ export interface PlayerPublic {
   score: number;
   clueSubmitted: boolean;
   hasVoted: boolean;
+  lastSeenAt?: number;
   // During CLUE_REVEAL, DISCUSSION, VOTING, ROUND_RESULT:
   clue?: string;
   // In ROUND_RESULT or after votes tallied:
@@ -33,7 +34,29 @@ export interface PlayerPublic {
 export type WinReason =
   | 'IMPOSTOR_NOT_CAUGHT'
   | 'IMPOSTOR_GUESSED_WORD'
-  | 'IMPOSTOR_CAUGHT_FAILED_GUESS';
+  | 'IMPOSTOR_CAUGHT_FAILED_GUESS'
+  | 'IMPOSTOR_SURVIVED_FINAL_TWO';
+
+export interface PlayerPublic {
+  id: string;
+  name: string;
+  isHost: boolean;
+  isReady: boolean;
+  isConnected: boolean;
+  status: PlayerStatus;
+  eliminated?: boolean;
+  waitingForNextRound?: boolean;
+  membershipState?: 'active' | 'temporarilyDisconnected' | 'left';
+  score: number;
+  clueSubmitted: boolean;
+  hasVoted: boolean;
+  lastSeenAt?: number;
+  // During CLUE_REVEAL, DISCUSSION, VOTING, ROUND_RESULT:
+  clue?: string;
+  // In ROUND_RESULT or after votes tallied:
+  role?: PlayerRole;
+  voteCount?: number;
+}
 
 export interface ClientGameState {
   roomCode: string;
@@ -58,6 +81,13 @@ export interface ClientGameState {
   // Discussion & Voting:
   tiedPlayerIds?: string[]; // for TIEBREAK_VOTING
   myVoteTargetId?: string;
+  voteCycle?: number;
+  eliminationHistory?: Array<{
+    playerId: string;
+    playerName: string;
+    role: PlayerRole;
+    voteCycle: number;
+  }>;
 
   // Impostor Guess / Results:
   impostorId?: string;
@@ -78,6 +108,7 @@ export type ClientAction =
   | { type: 'CREATE_ROOM'; playerName: string }
   | { type: 'JOIN_ROOM'; roomCode: string; playerName: string; playerId?: string }
   | { type: 'RECONNECT'; roomCode: string; playerId: string }
+  | { type: 'HEARTBEAT'; roomCode?: string; playerId?: string }
   | { type: 'TOGGLE_READY' }
   | { type: 'START_GAME' }
   | { type: 'SET_CLUE_DURATION'; duration: number }
@@ -86,6 +117,7 @@ export type ClientAction =
   | { type: 'SUBMIT_VOTE'; targetPlayerId: string }
   | { type: 'SUBMIT_IMPOSTOR_GUESS'; word: string }
   | { type: 'NEXT_ROUND' }
+  | { type: 'KICK_PLAYER'; targetPlayerId: string }
   | { type: 'LEAVE_ROOM'; roomCode?: string; playerId?: string };
 
 // Server to Client Messages
@@ -94,6 +126,8 @@ export type ServerMessage =
   | { type: 'ERROR'; message: string; code?: string }
   | { type: 'ROOM_CREATED'; roomCode: string; playerId: string }
   | { type: 'ROOM_JOINED'; roomCode: string; playerId: string }
+  | { type: 'HEARTBEAT_ACK'; timestamp: number }
   | { type: 'LEFT_ROOM' }
+  | { type: 'KICKED_FROM_ROOM'; reason?: string }
   | { type: 'ROOM_CLOSED'; reason: string; message: string }
   | { type: 'TICK_WARN'; remainingSeconds: number };

@@ -20,23 +20,27 @@ export const DiscussionAndVotingView: React.FC<DiscussionAndVotingViewProps> = (
   const [showLargeClue, setShowLargeClue] = useState<boolean>(true);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
 
-  const activePlayers = gameState.players.filter(p => p.isConnected);
-  const myPlayer = activePlayers.find(p => p.id === gameState.myPlayerId);
+  const activePlayers = gameState.players.filter(p => p.status !== 'eliminated' && !p.waitingForNextRound);
+  const eliminatedPlayers = gameState.players.filter(p => p.status === 'eliminated' || p.eliminated);
+  const myPlayer = gameState.players.find(p => p.id === gameState.myPlayerId);
+  const isMyPlayerEliminated = myPlayer?.status === 'eliminated' || myPlayer?.eliminated === true;
+  const isMyPlayerWaiting = Boolean(myPlayer?.waitingForNextRound);
   const myClue = myPlayer?.clue || gameState.mySubmittedClue || '';
   const hasVoted = Boolean(myPlayer?.hasVoted || gameState.myVoteTargetId);
+  const canVote = !isMyPlayerEliminated && !isMyPlayerWaiting && !hasVoted;
 
   const isTiebreak = gameState.phase === 'TIEBREAK_VOTING';
   const tiedIds = gameState.tiedPlayerIds || [];
 
   const handleVoteClick = (targetId: string) => {
-    if (hasVoted) return;
+    if (!canVote) return;
     if (targetId === gameState.myPlayerId) return;
     if (isTiebreak && !tiedIds.includes(targetId)) return;
     setSelectedTargetId(targetId);
   };
 
   const handleConfirmVote = () => {
-    if (!selectedTargetId || hasVoted) return;
+    if (!selectedTargetId || !canVote) return;
     onSubmitVote(selectedTargetId);
   };
 
@@ -81,6 +85,52 @@ export const DiscussionAndVotingView: React.FC<DiscussionAndVotingViewProps> = (
           </span>
         </button>
       </div>
+
+      {/* Multi-cycle Voting Notification Banner */}
+      {gameState.voteCycle && gameState.voteCycle > 1 && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full p-4 mb-5 rounded-3xl bg-[#2d3282] border-3 border-[#4cc9f0] text-center shadow-2xl"
+        >
+          <span className="text-[11px] font-black uppercase text-[#4cc9f0] tracking-widest block mb-1">
+            Ronda {gameState.roundNumber} • Ciclo de Votación #{gameState.voteCycle}
+          </span>
+          {gameState.eliminatedOption === 'NOBODY' ? (
+            <p className="text-xs sm:text-sm text-white font-bold">
+              🗳️ En la votación anterior se votó <span className="text-[#4cc9f0]">NADIE</span>. ¡Nadie fue eliminado y el impostor sigue libre!
+            </p>
+          ) : gameState.eliminatedName ? (
+            <p className="text-xs sm:text-sm text-white font-bold">
+              🗳️ <span className="text-[#f72585]">{gameState.eliminatedName}</span> era INOCENTE y fue eliminado. Quedan {activePlayers.length} jugadores en juego.
+            </p>
+          ) : null}
+        </motion.div>
+      )}
+
+      {/* Spectator notice if player is eliminated */}
+      {isMyPlayerEliminated && (
+        <div className="w-full p-3.5 mb-5 rounded-2xl bg-amber-500/20 border-2 border-amber-400/40 text-center">
+          <p className="text-xs sm:text-sm font-black text-amber-300 uppercase tracking-wide">
+            Has sido eliminado en esta ronda
+          </p>
+          <p className="text-xs text-white/70 mt-0.5">
+            Puedes seguir el debate y ver la votación como espectador.
+          </p>
+        </div>
+      )}
+
+      {/* Spectator notice if player joined mid-round */}
+      {isMyPlayerWaiting && (
+        <div className="w-full p-3.5 mb-5 rounded-2xl bg-[#4cc9f0]/20 border-2 border-[#4cc9f0]/40 text-center">
+          <p className="text-xs sm:text-sm font-black text-[#4cc9f0] uppercase tracking-wide">
+            Observando partida en curso
+          </p>
+          <p className="text-xs text-white/70 mt-0.5">
+            Te unirás automáticamente como jugador activo al comenzar la siguiente ronda.
+          </p>
+        </div>
+      )}
 
       {/* Title & Discussion Header - No timer! */}
       <div className="text-center mb-6 w-full">
@@ -188,17 +238,17 @@ export const DiscussionAndVotingView: React.FC<DiscussionAndVotingViewProps> = (
         })}
 
         {/* NOBODY (Spanish: NADIE) Option Card */}
-        {isNobodyEligible && (
+        {isNobodyEligible && !isMyPlayerEliminated && !isMyPlayerWaiting && (
           <motion.div
             layout
             id="candidate-card-nobody"
             onClick={() => {
-              if (!hasVoted) {
+              if (canVote) {
                 handleVoteClick('NOBODY');
               }
             }}
             className={`w-full p-4 sm:p-5 rounded-2xl sm:rounded-3xl border-3 sm:border-4 transition-all select-none ${
-              !hasVoted
+              canVote
                 ? 'cursor-pointer hover:border-[#4cc9f0] active:scale-[0.99]'
                 : 'cursor-default'
             } ${
@@ -236,7 +286,7 @@ export const DiscussionAndVotingView: React.FC<DiscussionAndVotingViewProps> = (
                 </div>
               </div>
 
-              {!hasVoted && (
+              {canVote && (
                 <div
                   className={`w-7 h-7 rounded-full border-2 flex items-center justify-center transition-all ${
                     selectedTargetId === 'NOBODY'
@@ -252,9 +302,39 @@ export const DiscussionAndVotingView: React.FC<DiscussionAndVotingViewProps> = (
         )}
       </div>
 
+      {/* Previously Eliminated Players in this Round */}
+      {eliminatedPlayers.length > 0 && (
+        <div className="w-full mb-6 p-4 rounded-3xl bg-[#1a1b4b]/60 border-2 border-white/10">
+          <span className="text-[11px] font-black uppercase text-white/50 tracking-wider block mb-2">
+            Eliminados en esta ronda ({eliminatedPlayers.length})
+          </span>
+          <div className="flex flex-wrap gap-2">
+            {eliminatedPlayers.map(p => (
+              <span
+                key={p.id}
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-red-500/10 border border-red-500/30 text-xs font-bold text-red-300"
+              >
+                <UserX className="w-3.5 h-3.5" />
+                <span>{p.name}</span>
+                <span className="text-[10px] text-red-400 font-semibold">(Inocente)</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Vote Submission & Locked Confirmation State */}
       <div className="w-full max-w-md mt-2">
-        {!hasVoted ? (
+        {isMyPlayerEliminated || isMyPlayerWaiting ? (
+          <div className="p-5 rounded-3xl bg-[#2d3282] border-3 border-white/20 text-center space-y-1 shadow-xl">
+            <span className="text-sm font-black text-white font-['Outfit'] uppercase tracking-wider block">
+              Modo Espectador
+            </span>
+            <p className="text-xs text-white/70 font-medium">
+              Esperando a que los jugadores activos terminen de votar... ({votedCount}/{totalCount} votos recibidos)
+            </p>
+          </div>
+        ) : !hasVoted ? (
           <button
             id="confirm-vote-btn"
             type="button"

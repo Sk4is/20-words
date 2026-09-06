@@ -29,6 +29,7 @@ export function useGameSocket() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const prevPhaseRef = useRef<string | null>(null);
   // Track intentional room leave so user is never re-added by auto-reconnect or lagging broadcasts
   const hasIntentionallyLeftRef = useRef<boolean>(false);
@@ -43,6 +44,19 @@ export function useGameSocket() {
     }
   }, []);
 
+  // Send periodic presence heartbeat
+  const sendHeartbeat = useCallback(() => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      const savedRoom = localStorage.getItem('20words_room_code') || undefined;
+      const savedId = localStorage.getItem('20words_player_id') || undefined;
+      wsRef.current.send(JSON.stringify({
+        type: 'HEARTBEAT',
+        roomCode: savedRoom,
+        playerId: savedId
+      }));
+    }
+  }, []);
+
   const connect = useCallback(() => {
     if (typeof window === 'undefined') return;
 
@@ -52,6 +66,11 @@ export function useGameSocket() {
         wsRef.current.close();
       } catch {}
       wsRef.current = null;
+    }
+
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current);
+      heartbeatIntervalRef.current = null;
     }
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -76,11 +95,24 @@ export function useGameSocket() {
           playerId: savedId
         }));
       }
+
+      // Start periodic 12-second heartbeat
+      if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
+      heartbeatIntervalRef.current = setInterval(() => {
+        sendHeartbeat();
+      }, 12000);
+      // Send initial heartbeat immediately
+      sendHeartbeat();
     };
 
     ws.onmessage = (event) => {
       try {
         const msg: ServerMessage = JSON.parse(event.data);
+
+        if (msg.type === 'HEARTBEAT_ACK') {
+          // Heartbeat acknowledged by server
+          return;
+        }
 
         if (msg.type === 'SYNC_STATE') {
           const newState = msg.state;
@@ -95,8 +127,8 @@ export function useGameSocket() {
           const currentSavedId = localStorage.getItem('20words_player_id');
           const isPlayerInRoom = newState.players?.some(p => p.id === myPlayerId || p.id === currentSavedId);
           if (!isPlayerInRoom) {
-            setGameState(null);
-            localStorage.removeItem('20words_room_code');
+            // Player might be reconnecting or in the process of joining; do not abruptly destroy state or wipe storage
+            console.warn('[SYNC_STATE] Local player ID not found in room snapshot yet. Awaiting reconnect...');
             return;
           }
 
@@ -129,6 +161,16 @@ export function useGameSocket() {
           hasIntentionallyLeftRef.current = true;
           setGameState(null);
           localStorage.removeItem('20words_room_code');
+        } else if (msg.type === 'KICKED_FROM_ROOM') {
+          hasIntentionallyLeftRef.current = true;
+          const currentCode = gameState?.roomCode || localStorage.getItem('20words_room_code');
+          if (currentCode) {
+            intentionallyLeftRoomsRef.current.add(currentCode.toUpperCase().trim());
+          }
+          localStorage.removeItem('20words_room_code');
+          setGameState(null);
+          setErrorMessage(msg.reason || 'Has sido expulsado de la sala por el anfitrión.');
+          sound.vibrate(80);
         } else if (msg.type === 'ROOM_CLOSED') {
           hasIntentionallyLeftRef.current = true;
           const currentCode = gameState?.roomCode || localStorage.getItem('20words_room_code');
@@ -182,23 +224,51 @@ export function useGameSocket() {
     ws.onclose = () => {
       setStatus('DISCONNECTED');
       wsRef.current = null;
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current);
+        heartbeatIntervalRef.current = null;
+      }
       // Reconnect after delay
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = setTimeout(() => {
         connect();
-      }, 2500);
+      }, 2000);
     };
-  }, []);
+  }, [sendHeartbeat, myPlayerId, gameState?.roomCode]);
 
   useEffect(() => {
     connect();
+
+    // Mobile resilience: reconnect or heartbeat immediately when tab/screen becomes visible or network reconnects
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+          console.log('[VISIBILITY] Tab visible, reconnecting socket immediately...');
+          connect();
+        } else {
+          sendHeartbeat();
+        }
+      }
+    };
+
+    const handleOnline = () => {
+      console.log('[NETWORK] Online event detected, reconnecting socket immediately...');
+      connect();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('online', handleOnline);
+
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('online', handleOnline);
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
       if (wsRef.current) {
         wsRef.current.close();
       }
     };
-  }, [connect]);
+  }, [connect, sendHeartbeat]);
 
   // Action helpers
   const createRoom = (playerName: string) => {
@@ -208,7 +278,7 @@ export function useGameSocket() {
     intentionallyLeftRoomsRef.current.clear();
     localStorage.setItem('20words_player_name', name);
     setSavedName(name);
-    send({ type: 'CREATE_ROOM', playerName: name });
+    send({ type: 'CREATE_ROOM', playerName: name, playerId: myPlayerId });
   };
 
   const joinRoom = (roomCode: string, playerName: string) => {
@@ -220,6 +290,11 @@ export function useGameSocket() {
     localStorage.setItem('20words_player_name', name);
     setSavedName(name);
     send({ type: 'JOIN_ROOM', roomCode: code, playerName: name, playerId: myPlayerId });
+  };
+
+  const kickPlayer = (targetPlayerId: string) => {
+    sound.playPop();
+    send({ type: 'KICK_PLAYER', targetPlayerId });
   };
 
   const toggleReady = () => {
@@ -293,6 +368,7 @@ export function useGameSocket() {
     errorMessage,
     createRoom,
     joinRoom,
+    kickPlayer,
     toggleReady,
     setClueDuration,
     startGame,

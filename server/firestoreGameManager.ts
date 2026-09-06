@@ -33,6 +33,9 @@ export interface FirestorePlayer {
   connected: boolean;
   isHost: boolean;
   status: PlayerStatus;
+  eliminated?: boolean;
+  waitingForNextRound?: boolean;
+  membershipState?: 'active' | 'temporarilyDisconnected' | 'left';
   score: number;
   role: PlayerRole | null;
   clue: string | null;
@@ -40,6 +43,7 @@ export interface FirestorePlayer {
   voteTargetId: string | null;
   hasVoted: boolean;
   lastActive: number;
+  lastSeenAt: number;
 }
 
 export interface FirestoreRoom {
@@ -61,6 +65,13 @@ export interface FirestoreRoom {
   revealEndTimestamp: number | null;
   tiedPlayerIds: string[];
   eliminatedOption: string | null;
+  voteCycle?: number;
+  eliminationHistory?: Array<{
+    playerId: string;
+    playerName: string;
+    role: PlayerRole;
+    voteCycle: number;
+  }>;
   winner: 'INNOCENTS' | 'IMPOSTOR' | null;
   winReason: WinReason | null;
   pointsAwarded: Record<string, number>;
@@ -119,9 +130,14 @@ export class FirestoreGameManager {
   private roomCache: Map<string, FirestoreRoom> = new Map();
   // roomCode -> local phase timeout
   private roomTimers: Map<string, NodeJS.Timeout> = new Map();
+  // Background interval for robust presence checks & grace period enforcement
+  private presenceCleanupInterval: NodeJS.Timeout | null = null;
+  // Grace period before offline players are cleaned up (90-120 seconds, using 120s)
+  public static readonly DISCONNECT_GRACE_PERIOD_MS = 120000;
 
   constructor() {
     this.initFirebase();
+    this.startPresenceCleanup();
   }
 
   private initFirebase() {
@@ -138,6 +154,25 @@ export class FirestoreGameManager {
     } catch (err) {
       console.error('[DATABASE ERROR] Failed to initialize Firebase Firestore:', err);
     }
+  }
+
+  /**
+   * Room presence check:
+   * PRINCIPLE: Rooms and players must NEVER be removed because of elapsed time alone.
+   * A room remains valid until the host explicitly decides to leave or close it.
+   * Mobile backgrounding, screen locks, and network drops are recoverable.
+   */
+  private startPresenceCleanup() {
+    // Rooms and players are NEVER deleted because of elapsed time.
+    // Presence cleanup interval is disabled to guarantee zero accidental disconnects.
+    if (this.presenceCleanupInterval) {
+      clearInterval(this.presenceCleanupInterval);
+      this.presenceCleanupInterval = null;
+    }
+  }
+
+  private async checkRoomsPresence(): Promise<void> {
+    // No automatic removal of players or rooms based on time.
   }
 
   // Generate distinct, clean 5-character room code (avoid 0/O, 1/I)
@@ -198,7 +233,8 @@ export class FirestoreGameManager {
       clueSubmitted: false,
       voteTargetId: null,
       hasVoted: false,
-      lastActive: Date.now()
+      lastActive: Date.now(),
+      lastSeenAt: Date.now()
     };
 
     const newRoom: FirestoreRoom = {
@@ -288,6 +324,7 @@ export class FirestoreGameManager {
           const existingPlayer = { ...currentPlayers[playerId] };
           existingPlayer.connected = true;
           existingPlayer.lastActive = Date.now();
+          existingPlayer.lastSeenAt = Date.now();
           if (playerName.trim()) {
             existingPlayer.name = playerName.trim();
           }
@@ -298,7 +335,7 @@ export class FirestoreGameManager {
             updatedAt: Date.now()
           });
 
-          console.log(`[JOIN ATTEMPT] Player joined successfully (reconnected existing player ${existingPlayer.name})`);
+          console.log(`[PLAYER_RECONNECTED] Reconnected existing player ${existingPlayer.name} (${playerId}) in room ${code}`);
           return {
             room: { ...room, players: updatedPlayers },
             player: existingPlayer
@@ -311,12 +348,8 @@ export class FirestoreGameManager {
           throw new CustomError('Room is full (maximum 6 players).', 'ROOM_FULL');
         }
 
-        // Phase check: must be LOBBY to join as a new player
-        if (room.currentPhase !== 'LOBBY') {
-          console.log(`[JOIN FAILED] Reason: Game in progress. Room ${code} is in phase ${room.currentPhase}.`);
-          throw new CustomError('A round is currently in progress. Please wait for the lobby.', 'ROUND_IN_PROGRESS');
-        }
-
+        // Phase check: If game in progress, allow player to enter as waitingForNextRound
+        const isGameInProgress = room.currentPhase !== 'LOBBY' && room.currentPhase !== 'ROUND_RESULT';
         const newPlayerId = playerId || 'p_' + Math.random().toString(36).substring(2, 10);
         const cleanName = playerName.trim() || `Player ${Object.keys(currentPlayers).length + 1}`;
 
@@ -324,17 +357,20 @@ export class FirestoreGameManager {
           playerId: newPlayerId,
           name: cleanName,
           joinedAt: Date.now(),
-          ready: false,
+          ready: isGameInProgress ? true : false,
           connected: true,
           isHost: false,
           status: 'active',
+          waitingForNextRound: isGameInProgress,
+          membershipState: 'active',
           score: 0,
           role: null,
           clue: null,
           clueSubmitted: false,
           voteTargetId: null,
           hasVoted: false,
-          lastActive: Date.now()
+          lastActive: Date.now(),
+          lastSeenAt: Date.now()
         };
 
         const updatedPlayers = {
@@ -347,7 +383,7 @@ export class FirestoreGameManager {
           updatedAt: Date.now()
         });
 
-        console.log(`[JOIN ATTEMPT] Player joined successfully`);
+        console.log(`[JOIN ATTEMPT] Player joined successfully (waitingForNextRound: ${isGameInProgress})`);
         return {
           room: { ...room, players: updatedPlayers },
           player: newPlayer
@@ -381,6 +417,60 @@ export class FirestoreGameManager {
   }
 
   /**
+   * Heartbeat handling:
+   * Updates lastSeenAt and lastActive.
+   * If player was marked temporarily disconnected, restores connected = true.
+   */
+  public async handleHeartbeat(
+    ws: WebSocket,
+    roomCode?: string,
+    playerId?: string
+  ): Promise<{ success: boolean; roomCode?: string; playerId?: string }> {
+    const entry = this.socketPlayerMap.get(ws);
+    const code = (roomCode || entry?.roomCode || '').trim().toUpperCase();
+    const pId = playerId || entry?.playerId;
+
+    if (!code || !pId) {
+      return { success: false };
+    }
+
+    // Ensure socket is registered
+    if (!entry) {
+      this.registerLocalSocket(ws, code, pId);
+      this.ensureRoomListener(code);
+    }
+
+    const now = Date.now();
+    try {
+      const roomRef = doc(this.db, 'rooms', code);
+      const cached = this.roomCache.get(code);
+
+      if (cached && cached.players && cached.players[pId]) {
+        const player = cached.players[pId];
+        const wasDisconnected = !player.connected;
+        player.connected = true;
+        player.lastSeenAt = now;
+        player.lastActive = now;
+
+        if (wasDisconnected) {
+          console.log(`[PLAYER_RECONNECTED] Player ${pId} (${player.name}) restored connection via heartbeat in room ${code}`);
+          await updateDoc(roomRef, {
+            [`players.${pId}.connected`]: true,
+            [`players.${pId}.lastSeenAt`]: now,
+            [`players.${pId}.lastActive`]: now,
+            updatedAt: now
+          });
+        }
+      }
+
+      return { success: true, roomCode: code, playerId: pId };
+    } catch (err) {
+      console.warn(`[HEARTBEAT WARN] Failed to update presence for ${pId} in room ${code}:`, err);
+      return { success: false };
+    }
+  }
+
+  /**
    * Register local socket connection for this Cloud Run instance
    */
   private registerLocalSocket(ws: WebSocket, roomCode: string, playerId: string) {
@@ -403,11 +493,24 @@ export class FirestoreGameManager {
     const roomRef = doc(this.db, 'rooms', roomCode);
     const unsubscribe = onSnapshot(
       roomRef,
-      (snapshot) => {
+      async (snapshot) => {
         if (!snapshot.exists()) {
-          console.log(`[REALTIME SYNC] Room ${roomCode} was removed or does not exist`);
-          this.roomCache.delete(roomCode);
-          this.broadcastRoomClosed(roomCode, 'HOST_LEFT');
+          console.log(`[REALTIME SYNC] Transient check: Snapshot missing for room ${roomCode}. Verifying with getDoc before closing...`);
+          // Verify with an authoritative getDoc to prevent transient listener glitches from closing active rooms
+          setTimeout(async () => {
+            try {
+              const verifySnap = await getDoc(roomRef);
+              if (!verifySnap.exists()) {
+                console.log(`[REALTIME SYNC] Confirmed room ${roomCode} was genuinely deleted.`);
+                this.roomCache.delete(roomCode);
+                this.broadcastRoomClosed(roomCode, 'ROOM_DELETED');
+              } else {
+                console.log(`[REALTIME SYNC] Verification passed: room ${roomCode} still exists.`);
+              }
+            } catch (err) {
+              console.warn(`[REALTIME SYNC] Error verifying room ${roomCode}:`, err);
+            }
+          }, 1500);
           return;
         }
 
@@ -468,9 +571,14 @@ export class FirestoreGameManager {
    * - Cleans up listeners, timers, and socket mappings
    * - Ensures no host privileges are transferred
    */
-  public async closeRoomDueToHostLeave(roomCode: string, hostPlayerId: string, hostWs?: WebSocket): Promise<void> {
+  public async closeRoomDueToHostLeave(
+    roomCode: string,
+    hostPlayerId: string,
+    hostWs?: WebSocket,
+    reason: string = 'HOST_LEFT'
+  ): Promise<void> {
     const code = roomCode.trim().toUpperCase();
-    console.log(`[HOST LEAVE] Host ${hostPlayerId} left room ${code}. Closing room immediately for all players.`);
+    console.log(`[ROOM_DELETED] Room ${code} closing due to host ${hostPlayerId} departure (reason: ${reason}).`);
 
     // 1. Unsubscribe Firestore snapshot listener immediately so we handle notifications authoritatively
     const unsub = this.roomListeners.get(code);
@@ -495,8 +603,10 @@ export class FirestoreGameManager {
           } else {
             ws.send(JSON.stringify({
               type: 'ROOM_CLOSED',
-              reason: 'HOST_LEFT',
-              message: 'The host has left. The room has been closed.'
+              reason,
+              message: reason === 'HOST_OFFLINE_TIMEOUT'
+                ? 'The host was disconnected for too long. The room has been closed.'
+                : 'The host has left. The room has been closed.'
             }));
           }
         }
@@ -511,14 +621,17 @@ export class FirestoreGameManager {
     try {
       const roomRef = doc(this.db, 'rooms', code);
       await deleteDoc(roomRef);
-      console.log(`[ROOM DELETED] Room ${code} successfully deleted from Firestore because host left.`);
+      console.log(`[ROOM DELETED] Room ${code} successfully deleted from Firestore.`);
     } catch (err) {
-      console.error(`[DATABASE ERROR] Failed to delete room ${code} on host leave:`, err);
+      console.error(`[DATABASE ERROR] Failed to delete room ${code}:`, err);
     }
   }
 
   /**
-   * Handle socket disconnect
+   * Handle socket disconnect:
+   * IMPORTANT: Temporary connection loss must NEVER immediately remove a player or host from the room!
+   * Mobile devices briefly lose connectivity on screen lock, app switching, or network handoffs.
+   * Mark player as temporarily disconnected and give them a 120s grace period to reconnect.
    */
   public async handleSocketDisconnect(ws: WebSocket): Promise<void> {
     const entry = this.socketPlayerMap.get(ws);
@@ -530,17 +643,7 @@ export class FirestoreGameManager {
     const sockets = this.roomSockets.get(roomCode);
     if (sockets) {
       sockets.delete(ws);
-      if (sockets.size === 0) {
-        this.roomSockets.delete(roomCode);
-        const unsub = this.roomListeners.get(roomCode);
-        if (unsub) {
-          unsub();
-          this.roomListeners.delete(roomCode);
-        }
-      }
     }
-
-    console.log(`[DISCONNECT] Socket closed for player ${playerId} in room ${roomCode}`);
 
     try {
       const roomRef = doc(this.db, 'rooms', roomCode);
@@ -553,14 +656,9 @@ export class FirestoreGameManager {
 
       const isHost = room.hostPlayerId === playerId || player.isHost === true;
 
-      // If the HOST disconnects/leaves for any reason, close the room immediately for everyone!
-      // Do NOT transfer host privileges to another player.
-      if (isHost) {
-        await this.closeRoomDueToHostLeave(roomCode, playerId, ws);
-        return;
-      }
+      console.log(`[PLAYER_DISCONNECTED_SOCKET] Socket closed for ${isHost ? 'HOST' : 'guest'} ${playerId} (${player.name}) in room ${roomCode}. Starting 120s grace period.`);
 
-      // Non-host player disconnected: mark connected = false without changing host
+      // Update player's connected status in Firestore while preserving all room and round state
       await runTransaction(this.db, async (tx) => {
         const txSnap = await tx.get(roomRef);
         if (!txSnap.exists()) return;
@@ -571,6 +669,7 @@ export class FirestoreGameManager {
         const p = { ...txRoom.players[playerId] };
         p.connected = false;
         p.lastActive = Date.now();
+        p.lastSeenAt = Date.now();
 
         const updatedPlayers = { ...txRoom.players, [playerId]: p };
 
@@ -586,8 +685,8 @@ export class FirestoreGameManager {
 
   /**
    * Leave Room:
-   * Explicitly remove player when clicking "SALIR"
-   * If the host leaves, the entire room is closed immediately and all players are returned to the main menu.
+   * Explicitly remove player when clicking "SALIR" (intentional action).
+   * If the host leaves, the entire room is closed immediately and all players return to main menu.
    */
   public async leaveRoom(roomCode: string, playerId: string, ws?: WebSocket): Promise<void> {
     const code = roomCode.trim().toUpperCase();
@@ -606,28 +705,21 @@ export class FirestoreGameManager {
       const leavingPlayer = room.players?.[playerId];
       const isHost = room.hostPlayerId === playerId || leavingPlayer?.isHost === true;
 
-      // If the HOST leaves for any reason, the entire room must close immediately for all players!
-      // Do NOT transfer host privileges to another player.
+      // If the HOST explicitly leaves, close the room immediately for all players
       if (isHost) {
-        await this.closeRoomDueToHostLeave(code, playerId, ws);
+        console.log(`[PLAYER_REMOVED_EXPLICIT_LEAVE] Host ${playerId} explicitly clicked SALIR in room ${code}. Closing room.`);
+        await this.closeRoomDueToHostLeave(code, playerId, ws, 'HOST_LEFT');
         return;
       }
 
-      // Non-host player leaves:
-      // Dissociate socket immediately so no subsequent state broadcast is sent to it
+      // Non-host player explicitly leaves:
+      console.log(`[PLAYER_REMOVED_EXPLICIT_LEAVE] Guest ${playerId} (${leavingPlayer?.name || 'unknown'}) explicitly clicked SALIR in room ${code}.`);
+
       if (ws) {
         this.socketPlayerMap.delete(ws);
         const sockets = this.roomSockets.get(code);
         if (sockets) {
           sockets.delete(ws);
-          if (sockets.size === 0) {
-            this.roomSockets.delete(code);
-            const unsub = this.roomListeners.get(code);
-            if (unsub) {
-              unsub();
-              this.roomListeners.delete(code);
-            }
-          }
         }
       } else {
         for (const [sock, entry] of this.socketPlayerMap.entries()) {
@@ -636,14 +728,6 @@ export class FirestoreGameManager {
             const sockets = this.roomSockets.get(code);
             if (sockets) {
               sockets.delete(sock);
-              if (sockets.size === 0) {
-                this.roomSockets.delete(code);
-                const unsub = this.roomListeners.get(code);
-                if (unsub) {
-                  unsub();
-                  this.roomListeners.delete(code);
-                }
-              }
             }
             break;
           }
@@ -664,7 +748,7 @@ export class FirestoreGameManager {
         // If no players remain, clean up room
         if (remainingPlayers.length === 0) {
           tx.delete(roomRef);
-          console.log(`[ROOM CLEANUP] Room ${code} was deleted because all players left.`);
+          console.log(`[ROOM_DELETED] Room ${code} deleted because all players left.`);
           return;
         }
 
@@ -673,7 +757,7 @@ export class FirestoreGameManager {
           updatedAt: Date.now()
         });
 
-        console.log(`[LEAVE ROOM] Player ${playerId} left room ${code}. Remaining: ${Object.keys(players).length}`);
+        console.log(`[LEAVE ROOM] Player ${playerId} removed from room ${code}. Remaining: ${Object.keys(players).length}`);
       });
 
       if (ws && ws.readyState === WebSocket.OPEN) {
@@ -793,12 +877,13 @@ export class FirestoreGameManager {
         // Prepare updated players: reset all statuses to 'active' for the round and assign roles
         const updatedPlayers: Record<string, FirestorePlayer> = {};
         for (const p of allPlayers) {
-          const isConnected = p.connected === true;
-          const isChosenImpostor = isConnected && p.playerId === chosenImpostorId;
+          const isChosenImpostor = p.playerId === chosenImpostorId;
           updatedPlayers[p.playerId] = {
             ...p,
             status: 'active',
-            role: isConnected ? (isChosenImpostor ? 'IMPOSTOR' : 'INNOCENT') : null,
+            eliminated: false,
+            waitingForNextRound: false,
+            role: isChosenImpostor ? 'IMPOSTOR' : 'INNOCENT',
             clue: null,
             clueSubmitted: false,
             voteTargetId: null,
@@ -824,6 +909,8 @@ export class FirestoreGameManager {
           pointsAwarded: {},
           tiedPlayerIds: [],
           eliminatedOption: null,
+          voteCycle: 1,
+          eliminationHistory: [],
           currentPhase: 'CLUE_PHASE',
           roundEndTimestamp,
           players: updatedPlayers,
@@ -875,15 +962,15 @@ export class FirestoreGameManager {
 
         const updatedPlayers = { ...room.players, [playerId]: updatedPlayer };
 
-        // Check if all connected active players submitted
-        const activePlayers = Object.values(updatedPlayers).filter(p => p.connected && p.status !== 'eliminated');
+        // Check if all active players submitted
+        const activePlayers = Object.values(updatedPlayers).filter(p => p.status !== 'eliminated');
         const allSubmitted = activePlayers.every(p => p.clueSubmitted);
 
         if (allSubmitted) {
           shouldTransition = true;
           // Autofill any missing clues and transition to VOTING
           for (const p of Object.values(updatedPlayers)) {
-            if (p.connected && !p.clueSubmitted) {
+            if (!p.clueSubmitted) {
               p.clue = p.clue || 'NO CLUE';
               p.clueSubmitted = true;
             }
@@ -973,7 +1060,7 @@ export class FirestoreGameManager {
         }
 
         const voter = room.players[playerId];
-        if (!voter || voter.hasVoted || voter.status === 'eliminated') return;
+        if (!voter || voter.hasVoted || voter.status === 'eliminated' || voter.waitingForNextRound) return;
         if (playerId === targetPlayerId) return; // Cannot vote for self
 
         if (room.currentPhase === 'TIEBREAK_VOTING') {
@@ -981,7 +1068,7 @@ export class FirestoreGameManager {
         } else {
           if (targetPlayerId !== 'NOBODY') {
             const target = room.players[targetPlayerId];
-            if (!target || !target.connected) return;
+            if (!target || target.status === 'eliminated' || target.waitingForNextRound) return;
           }
         }
 
@@ -992,7 +1079,9 @@ export class FirestoreGameManager {
         };
 
         const updatedPlayers = { ...room.players, [playerId]: updatedVoter };
-        const activePlayers = Object.values(updatedPlayers).filter(p => p.connected && p.status !== 'eliminated');
+        const activePlayers = Object.values(updatedPlayers).filter(
+          p => p.status !== 'eliminated' && !(p as any).eliminated && !p.waitingForNextRound
+        );
         const allVoted = activePlayers.every(p => p.hasVoted);
 
         if (allVoted) {
@@ -1019,7 +1108,7 @@ export class FirestoreGameManager {
           const topVotedOptions = candidateIds.filter(id => voteCounts[id] === maxVotes);
 
           if (topVotedOptions.length > 1) {
-            // Tiebreak
+            // Tiebreak: Reset votes and transition to tiebreak phase
             for (const p of Object.values(updatedPlayers)) {
               p.voteTargetId = null;
               p.hasVoted = false;
@@ -1034,37 +1123,59 @@ export class FirestoreGameManager {
             return;
           }
 
-          // Single highest voted
+          // Single highest voted option
           const eliminatedOption = topVotedOptions[0];
 
-          if (eliminatedOption !== 'NOBODY' && updatedPlayers[eliminatedOption]) {
-            updatedPlayers[eliminatedOption].status = 'eliminated';
-          }
-
+          // CASE 1: NADIE / NOBODY received the most votes
           if (eliminatedOption === 'NOBODY') {
-            // Impostor not caught
-            const pointsAwarded: Record<string, number> = {};
-            if (room.impostorId && updatedPlayers[room.impostorId]) {
-              updatedPlayers[room.impostorId].score += 2;
-              pointsAwarded[room.impostorId] = 2;
+            // Nobody is eliminated. Impostor does NOT win. Round continues!
+            for (const p of Object.values(updatedPlayers)) {
+              p.voteTargetId = null;
+              p.hasVoted = false;
             }
+            const nextCycle = (room.voteCycle || 1) + 1;
 
             tx.update(roomRef, {
               players: updatedPlayers,
+              currentPhase: 'DISCUSSION',
+              voteCycle: nextCycle,
+              tiedPlayerIds: [],
               eliminatedOption: 'NOBODY',
-              winner: 'IMPOSTOR',
-              winReason: 'IMPOSTOR_NOT_CAUGHT',
-              currentPhase: 'ROUND_RESULT',
-              pointsAwarded,
               updatedAt: Date.now()
             });
+            console.log(`[VOTING] Room ${code}: NOBODY received highest votes. Round continues to cycle ${nextCycle}.`);
             return;
           }
 
+          // CASE 2: A player was eliminated
           const isImpostor = eliminatedOption === room.impostorId;
+          if (updatedPlayers[eliminatedOption]) {
+            updatedPlayers[eliminatedOption].status = 'eliminated';
+            updatedPlayers[eliminatedOption].eliminated = true;
+          }
 
-          if (!isImpostor) {
-            // Innocent eliminated, Impostor wins
+          if (isImpostor) {
+            // CONDITION A — Impostor caught! Impostor gets 1 chance to guess secret word
+            tx.update(roomRef, {
+              players: updatedPlayers,
+              eliminatedOption,
+              tiedPlayerIds: [],
+              currentPhase: 'IMPOSTOR_GUESS',
+              updatedAt: Date.now()
+            });
+            console.log(`[VOTING] Room ${code}: Impostor ${eliminatedOption} eliminated! Guess phase starts.`);
+            return;
+          }
+
+          // An INNOCENT player was eliminated!
+          const remainingActive = Object.values(updatedPlayers).filter(
+            p => p.status !== 'eliminated' && !(p as any).eliminated && !p.waitingForNextRound
+          );
+
+          console.log(`[VOTING] Room ${code}: Innocent ${eliminatedOption} eliminated. Remaining active: ${remainingActive.length}`);
+
+          // CONDITION B — If after eliminations only 2 active players remain, the round ENDS!
+          if (remainingActive.length <= 2) {
             const pointsAwarded: Record<string, number> = {};
             if (room.impostorId && updatedPlayers[room.impostorId]) {
               updatedPlayers[room.impostorId].score += 2;
@@ -1074,25 +1185,50 @@ export class FirestoreGameManager {
             tx.update(roomRef, {
               players: updatedPlayers,
               eliminatedOption,
+              tiedPlayerIds: [],
               winner: 'IMPOSTOR',
-              winReason: 'IMPOSTOR_NOT_CAUGHT',
+              winReason: 'IMPOSTOR_SURVIVED_FINAL_TWO',
               currentPhase: 'ROUND_RESULT',
               pointsAwarded,
               updatedAt: Date.now()
             });
-          } else {
-            // Impostor eliminated! Give chance to guess
-            tx.update(roomRef, {
-              players: updatedPlayers,
-              eliminatedOption,
-              currentPhase: 'IMPOSTOR_GUESS',
-              updatedAt: Date.now()
+            console.log(`[VOTING] Room ${code}: Impostor survived down to 2 players. Round ends, Impostor wins!`);
+            return;
+          }
+
+          // More than 2 active players remain: The round CONTINUES!
+          // Reset votes for active players and move to DISCUSSION with incremented vote cycle
+          for (const p of Object.values(updatedPlayers)) {
+            p.voteTargetId = null;
+            p.hasVoted = false;
+          }
+
+          const nextCycle = (room.voteCycle || 1) + 1;
+          const currentHistory = [...(room.eliminationHistory || [])];
+          const elimPlayer = updatedPlayers[eliminatedOption];
+          if (elimPlayer) {
+            currentHistory.push({
+              playerId: eliminatedOption,
+              playerName: elimPlayer.name,
+              role: 'INNOCENT',
+              voteCycle: room.voteCycle || 1
             });
           }
+
+          tx.update(roomRef, {
+            players: updatedPlayers,
+            currentPhase: 'DISCUSSION',
+            voteCycle: nextCycle,
+            tiedPlayerIds: [],
+            eliminatedOption,
+            eliminationHistory: currentHistory,
+            updatedAt: Date.now()
+          });
+          console.log(`[VOTING] Room ${code}: Innocent eliminated. Round continues in DISCUSSION (cycle ${nextCycle}).`);
         } else {
           tx.update(roomRef, {
             players: updatedPlayers,
-            currentPhase: 'VOTING',
+            currentPhase: room.currentPhase === 'TIEBREAK_VOTING' ? 'TIEBREAK_VOTING' : 'VOTING',
             updatedAt: Date.now()
           });
         }
@@ -1195,12 +1331,13 @@ export class FirestoreGameManager {
         // Reset all players to 'active' on new round! Eliminated players from previous rounds become eligible again
         const updatedPlayers: Record<string, FirestorePlayer> = {};
         for (const p of allPlayers) {
-          const isConnected = p.connected === true;
-          const isChosenImpostor = isConnected && p.playerId === chosenImpostorId;
+          const isChosenImpostor = p.playerId === chosenImpostorId;
           updatedPlayers[p.playerId] = {
             ...p,
             status: 'active',
-            role: isConnected ? (isChosenImpostor ? 'IMPOSTOR' : 'INNOCENT') : null,
+            eliminated: false,
+            waitingForNextRound: false,
+            role: isChosenImpostor ? 'IMPOSTOR' : 'INNOCENT',
             clue: null,
             clueSubmitted: false,
             voteTargetId: null,
@@ -1226,6 +1363,8 @@ export class FirestoreGameManager {
           pointsAwarded: {},
           tiedPlayerIds: [],
           eliminatedOption: null,
+          voteCycle: 1,
+          eliminationHistory: [],
           currentPhase: 'CLUE_PHASE',
           roundEndTimestamp,
           players: updatedPlayers,
@@ -1238,6 +1377,61 @@ export class FirestoreGameManager {
     } catch (err: any) {
       console.error(`[DATABASE ERROR] Next round failed:`, err);
       return { success: false, error: err.message || 'Failed to start next round' };
+    }
+  }
+
+  /**
+   * Kick player from room (Host action in Lobby)
+   */
+  public async kickPlayer(roomCode: string, hostPlayerId: string, targetPlayerId: string): Promise<void> {
+    const code = roomCode.trim().toUpperCase();
+    const roomRef = doc(this.db, 'rooms', code);
+
+    try {
+      await runTransaction(this.db, async (tx) => {
+        const snap = await tx.get(roomRef);
+        if (!snap.exists()) return;
+
+        const room = snap.data() as FirestoreRoom;
+        if (room.hostPlayerId !== hostPlayerId) {
+          throw new CustomError('Only the host can kick players', 'NOT_HOST');
+        }
+        if (targetPlayerId === hostPlayerId) {
+          throw new CustomError('Host cannot kick themselves', 'CANNOT_KICK_SELF');
+        }
+
+        const currentPlayers = { ...room.players };
+        if (!currentPlayers[targetPlayerId]) return;
+
+        delete currentPlayers[targetPlayerId];
+
+        tx.update(roomRef, {
+          players: currentPlayers,
+          updatedAt: Date.now()
+        });
+      });
+
+      // Notify kicked player socket if open
+      const sockets = this.roomSockets.get(code);
+      if (sockets) {
+        for (const ws of sockets) {
+          const entry = this.socketPlayerMap.get(ws);
+          if (entry && entry.playerId === targetPlayerId) {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({
+                type: 'KICKED_FROM_ROOM',
+                reason: 'Has sido expulsado de la sala por el anfitrión.'
+              }));
+              ws.send(JSON.stringify({ type: 'LEFT_ROOM' }));
+            }
+            this.socketPlayerMap.delete(ws);
+            sockets.delete(ws);
+          }
+        }
+      }
+      console.log(`[HOST_KICK] Host ${hostPlayerId} kicked player ${targetPlayerId} from room ${code}`);
+    } catch (err) {
+      console.error(`[DATABASE ERROR] Kick player failed:`, err);
     }
   }
 
@@ -1288,9 +1482,13 @@ export class FirestoreGameManager {
         isReady: p.ready,
         isConnected: p.connected,
         status: p.status || 'active',
+        eliminated: p.status === 'eliminated' || p.eliminated === true,
+        waitingForNextRound: Boolean(p.waitingForNextRound),
+        membershipState: p.membershipState || (p.connected ? 'active' : 'temporarilyDisconnected'),
         score: p.score || 0,
         clueSubmitted: p.clueSubmitted || false,
         hasVoted: p.hasVoted || false,
+        lastSeenAt: p.lastSeenAt || p.lastActive,
         clue: (showClue || p.playerId === playerId) ? (p.clue ?? undefined) : undefined,
         role: isRoundOver ? (p.role ?? undefined) : undefined,
         voteCount: isRoundOver ? (voteCounts[p.playerId] || 0) : undefined
@@ -1313,7 +1511,9 @@ export class FirestoreGameManager {
       roundEndTimestamp: room.roundEndTimestamp,
       mySubmittedClue: me?.clue ?? undefined,
       tiedPlayerIds: room.tiedPlayerIds || [],
-      myVoteTargetId: me?.voteTargetId ?? undefined
+      myVoteTargetId: me?.voteTargetId ?? undefined,
+      voteCycle: room.voteCycle || 1,
+      eliminationHistory: room.eliminationHistory || []
     };
 
     // Secret word ONLY sent to Innocents, or to everyone in ROUND_RESULT
@@ -1327,18 +1527,22 @@ export class FirestoreGameManager {
       state.impostorName = impostorPlayer?.name;
     }
 
+    // Pass eliminated info across all phases when available
+    if (room.eliminatedOption) {
+      state.eliminatedOption = room.eliminatedOption;
+      state.eliminatedPlayerId = room.eliminatedOption !== 'NOBODY' ? room.eliminatedOption : null;
+      if (room.eliminatedOption === 'NOBODY') {
+        state.eliminatedName = 'NOBODY';
+      } else {
+        state.eliminatedName = room.players?.[room.eliminatedOption]?.name || 'Unknown';
+      }
+    }
+
     if (isRoundOver) {
       state.impostorGuess = room.impostorGuess;
       state.winner = room.winner;
       state.winReason = room.winReason;
       state.pointsAwarded = room.pointsAwarded;
-      state.eliminatedOption = room.eliminatedOption;
-      state.eliminatedPlayerId = (room.eliminatedOption && room.eliminatedOption !== 'NOBODY') ? room.eliminatedOption : null;
-      if (room.eliminatedOption === 'NOBODY') {
-        state.eliminatedName = 'NOBODY';
-      } else if (room.eliminatedOption) {
-        state.eliminatedName = room.players?.[room.eliminatedOption]?.name || 'Unknown';
-      }
     }
 
     return state;

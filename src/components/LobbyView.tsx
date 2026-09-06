@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Crown, CheckCircle2, Circle, Copy, Check, Users, Play, Sparkles, Clock } from 'lucide-react';
+import { Crown, CheckCircle2, Circle, Copy, Check, Users, Play, Sparkles, Clock, WifiOff, UserX } from 'lucide-react';
 import { ClientGameState } from '../types/game';
 import { sound } from '../services/sound';
 import { useLanguage } from '../i18n/LanguageContext';
@@ -10,18 +10,21 @@ interface LobbyViewProps {
   onToggleReady: () => void;
   onStartGame: () => void;
   onSetClueDuration?: (duration: number) => void;
+  onKickPlayer?: (targetPlayerId: string) => void;
 }
 
 export const LobbyView: React.FC<LobbyViewProps> = ({
   gameState,
   onToggleReady,
   onStartGame,
-  onSetClueDuration
+  onSetClueDuration,
+  onKickPlayer
 }) => {
   const { t } = useLanguage();
   const [copied, setCopied] = useState(false);
   const myPlayer = gameState.players.find(p => p.id === gameState.myPlayerId);
-  const activePlayers = gameState.players.filter(p => p.isConnected);
+  // Keep all players in room visible - temporary connection interruptions do not remove them!
+  const activePlayers = gameState.players;
   const connectedCount = activePlayers.length;
 
   const minPlayers = 3;
@@ -223,8 +226,14 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                   </div>
                 </div>
 
-                {/* Ready Status Badge */}
+                {/* Ready Status & Connection Badge */}
                 <div className="flex items-center gap-1.5 shrink-0">
+                  {!player.isConnected && (
+                    <span className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-300 text-xs font-bold animate-pulse">
+                      <WifiOff className="w-3 h-3" />
+                      <span className="hidden sm:inline">{t('lobby.reconnecting') || 'Reconnecting...'}</span>
+                    </span>
+                  )}
                   {player.isReady ? (
                     <span className="flex items-center gap-1 px-3 py-1 rounded-full bg-[#4cc9f0]/20 border border-[#4cc9f0] text-[#4cc9f0] text-xs font-black">
                       <CheckCircle2 className="w-3.5 h-3.5" />
@@ -235,6 +244,18 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                       <Circle className="w-3.5 h-3.5" />
                       <span>{t('lobby.notReady')}</span>
                     </span>
+                  )}
+
+                  {myPlayer?.isHost && !player.isHost && !isMe && onKickPlayer && (
+                    <button
+                      type="button"
+                      id={`kick-player-${player.id}`}
+                      onClick={() => onKickPlayer(player.id)}
+                      title="Expulsar jugador de la sala"
+                      className="p-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/30 transition active:scale-95 cursor-pointer ml-1"
+                    >
+                      <UserX className="w-3.5 h-3.5" />
+                    </button>
                   )}
                 </div>
               </motion.div>

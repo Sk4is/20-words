@@ -220,6 +220,7 @@ export const es: Record<string, string> = {
   "lobby.playerCount": "{count} / {max} JUGADORES",
   "lobby.playersInLobby": "JUGADORES EN LA SALA",
   "lobby.ready": "LISTO",
+  "lobby.reconnecting": "Reconectando...",
   "lobby.roomCode": "CÓDIGO DE SALA",
   "lobby.round": "Ronda #{round}",
   "lobby.shareHint": "¡Comparte este código con 2 a 5 amigos para que se unan desde su móvil u ordenador!",

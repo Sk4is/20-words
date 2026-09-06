@@ -44,13 +44,14 @@ async function startServer() {
   // WebSocket Server
   const wss = new WebSocketServer({ server, path: '/ws' });
 
-  // Ping-pong keepalive interval
+  // Ping-pong keepalive interval (tolerates temporary mobile sleep/throttling)
   const interval = setInterval(() => {
     wss.clients.forEach((ws: any) => {
-      if (ws.isAlive === false) {
+      ws.missedPings = (ws.missedPings || 0) + 1;
+      if (ws.missedPings >= 3) {
+        console.log('[WEBSOCKET] Terminating dead socket after 3 missed keepalives (90s).');
         return ws.terminate();
       }
-      ws.isAlive = false;
       ws.ping();
     });
   }, 30000);
@@ -61,18 +62,38 @@ async function startServer() {
 
   wss.on('connection', (ws: any) => {
     ws.isAlive = true;
+    ws.missedPings = 0;
     ws.on('pong', () => {
       ws.isAlive = true;
+      ws.missedPings = 0;
     });
 
     let activePlayerId: string | null = null;
     let activeRoomCode: string | null = null;
 
     ws.on('message', async (rawMessage: string) => {
+      ws.isAlive = true;
+      ws.missedPings = 0;
       try {
         const action: ClientAction = JSON.parse(rawMessage.toString());
 
         switch (action.type) {
+          case 'HEARTBEAT': {
+            const rCode = activeRoomCode || action.roomCode;
+            const pId = activePlayerId || action.playerId;
+            if (rCode && pId) {
+              activeRoomCode = rCode;
+              activePlayerId = pId;
+            }
+            await firestoreGameManager.handleHeartbeat(ws, rCode, pId);
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({
+                type: 'HEARTBEAT_ACK',
+                timestamp: Date.now()
+              }));
+            }
+            break;
+          }
           case 'CREATE_ROOM': {
             try {
               const { room, player } = await firestoreGameManager.createRoom(
@@ -226,6 +247,13 @@ async function startServer() {
               if (!res.success && res.error) {
                 ws.send(JSON.stringify({ type: 'ERROR', message: res.error }));
               }
+            }
+            break;
+          }
+
+          case 'KICK_PLAYER': {
+            if (activePlayerId && activeRoomCode && action.targetPlayerId) {
+              await firestoreGameManager.kickPlayer(activeRoomCode, activePlayerId, action.targetPlayerId);
             }
             break;
           }
